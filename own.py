@@ -4851,5 +4851,24 @@ def main():
     logging.info("Bot is starting...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
+# Add at the very bottom of your code, before or after main():
 if __name__ == '__main__':
+    # Start a simple HTTP server for health checks (required by Render)
+    import threading
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+    
+    def run_health_server():
+        server = HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 8080))), HealthHandler)
+        server.serve_forever()
+    
+    # Run health server in background
+    threading.Thread(target=run_health_server, daemon=True).start()
+    
+    # Run your bot
     main()
