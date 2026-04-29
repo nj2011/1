@@ -41,9 +41,6 @@ import aiohttp
 
 init(autoreset=True)
 
-# Change this line (line 64):
-TOKEN = "8329461842:AAEuHezJpfeGHgwdZM51K4vSn2inycnAi_4"
-
 # To this:
 import os
 TOKEN = os.environ.get("BOT_TOKEN", "8329461842:AAEuHezJpfeGHgwdZM51K4vSn2inycnAi_4")
