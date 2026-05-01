@@ -41,8 +41,6 @@ import aiohttp
 
 init(autoreset=True)
 
-# To this:
-import os
 TOKEN = os.environ.get("BOT_TOKEN", "8329461842:AAFQD2E5EnvmKASJDVNiguwIrq_Cs86EmQ0")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "7049142115"))
 KEY_PREFIX = "ᴋʜᴀᴛᴇʟʏɴᴘʀᴇᴍɪᴜᴍᴋᴇʏ-"
@@ -4799,7 +4797,22 @@ async def handle_callback_query(update: Update, context: CallbackContext):
             )
         except:
             pass
+# ========== HEALTH CHECK ENDPOINT FOR UPTIMEROBOT ==========
+from flask import Flask, jsonify
+import threading
 
+health_app = Flask(__name__)
+
+@health_app.route('/health')
+def health_check():
+    return jsonify({"status": "ok", "message": "Bot is running!"}), 200
+
+def run_health_server():
+    health_app.run(host='0.0.0.0', port=8080)
+
+# Start health server in background thread
+threading.Thread(target=run_health_server, daemon=True).start()
+print("✅ Health check server running on port 8080")
 # ========== MAIN FUNCTION ==========
 def main():
     """Start the bot."""

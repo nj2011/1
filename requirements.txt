@@ -4,3 +4,4 @@ fake-useragent==1.4.0
 aiohttp==3.9.0
 pycryptodome==3.19.0
 colorama==0.4.6
+Flask==2.3.0
