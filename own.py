@@ -43,7 +43,7 @@ init(autoreset=True)
 
 # To this:
 import os
-TOKEN = os.environ.get("BOT_TOKEN", "8329461842:AAEuHezJpfeGHgwdZM51K4vSn2inycnAi_4")
+TOKEN = os.environ.get("BOT_TOKEN", "8329461842:AAFQD2E5EnvmKASJDVNiguwIrq_Cs86EmQ0")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "7049142115"))
 KEY_PREFIX = "ᴋʜᴀᴛᴇʟʏɴᴘʀᴇᴍɪᴜᴍᴋᴇʏ-"
 
