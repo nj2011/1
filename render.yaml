@@ -1,9 +1,19 @@
 services:
   - type: web
-    name: telegram-bot
+    name: telegram-ad-bot
     runtime: python
+    repo: https://github.com/nj2011/1
+    branch: main
     buildCommand: pip install -r requirements.txt
-    startCommand: python own.py
+    startCommand: python ads.py
     envVars:
+      - key: BOT_TOKEN
+        sync: false  # Set in Render dashboard
+      - key: ADMIN_ID
+        sync: false  # Set in Render dashboard
       - key: PYTHON_VERSION
-        value: 3.11.9
+        value: 3.11.0
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1

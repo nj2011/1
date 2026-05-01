@@ -4,9 +4,15 @@ import json
 import threading
 import time
 import logging
+import os
+import sys
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
+from dataclasses import dataclass
+from collections import defaultdict
+from flask import Flask, request, jsonify
+import socket
 
 # Setup logging
 logging.basicConfig(
@@ -17,6 +23,9 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
+# Flask app for webhook
+app = Flask(__name__)
 
 class AdStatus(Enum):
     PENDING = "pending"
@@ -39,6 +48,43 @@ class AdType(Enum):
     AUDIO = "audio"
     STICKER = "sticker"
 
+class PinDuration(Enum):
+    ONE_HOUR = 3600
+    THREE_HOURS = 10800
+    SIX_HOURS = 21600
+    TWELVE_HOURS = 43200
+    ONE_DAY = 86400
+    THREE_DAYS = 259200
+    ONE_WEEK = 604800
+    FOREVER = 0
+
+class DeleteSchedule(Enum):
+    ONE_HOUR = 3600
+    THREE_HOURS = 10800
+    SIX_HOURS = 21600
+    TWELVE_HOURS = 43200
+    ONE_DAY = 86400
+    TWO_DAYS = 172800
+    THREE_DAYS = 259200
+    ONE_WEEK = 604800
+    NEVER = 0
+
+# ============ DATABASE SETUP FOR RENDER ============
+
+def get_db_path():
+    """Get database path - works on Render and locally"""
+    # Render provides /tmp for ephemeral storage, but better to use /data for persistent
+    if 'RENDER' in os.environ:
+        # Use /data directory for persistent storage on Render
+        data_dir = '/data'
+        if not os.path.exists(data_dir):
+            os.makedirs(data_dir)
+        return os.path.join(data_dir, 'ad_bot.db')
+    else:
+        return 'ad_bot.db'
+
+# ============ ACCURATE TIMER CLASS ============
+
 class AccurateTimer:
     """Accurate real-time timer system"""
     
@@ -59,7 +105,11 @@ class AccurateTimer:
             try:
                 now = datetime.now()
                 
-                self.bot.cursor.execute('''
+                # Use a fresh connection for each query
+                conn = sqlite3.connect(get_db_path(), check_same_thread=False)
+                cursor = conn.cursor()
+                
+                cursor.execute('''
                     SELECT t.*, a.content, a.ad_type, a.media_path, a.caption, a.target_channels,
                            a.source_chat_id, a.source_message_id, a.pin, a.pin_duration, a.delete_after
                     FROM timers t
@@ -70,7 +120,8 @@ class AccurateTimer:
                     ORDER BY t.next_run ASC
                 ''', (now.isoformat(),))
                 
-                due_timers = self.bot.cursor.fetchall()
+                due_timers = cursor.fetchall()
+                conn.close()
                 
                 for timer in due_timers:
                     self._execute_timer(timer)
@@ -84,58 +135,75 @@ class AccurateTimer:
     def _execute_timer(self, timer):
         """Execute a timer's ad posting"""
         try:
-            if len(timer) < 20:
-                return
-            
             timer_id = timer[0]
             ad_id = timer[1]
+            interval_value = timer[2]
+            interval_unit = timer[3]
+            next_run = timer[4]
+            last_run = timer[5]
+            total_runs = timer[6] if len(timer) > 6 else 0
+            max_runs = timer[7] if len(timer) > 7 else None
+            is_active = timer[8] if len(timer) > 8 else 1
+            created_at = timer[9] if len(timer) > 9 else None
             channels_json = timer[10] if len(timer) > 10 else None
+            created_from_time = timer[11] if len(timer) > 11 else None
+            timer_type = timer[12] if len(timer) > 12 else None
+            content = timer[13] if len(timer) > 13 else None
+            ad_type = timer[14] if len(timer) > 14 else None
+            media_path = timer[15] if len(timer) > 15 else None
+            caption = timer[16] if len(timer) > 16 else None
+            target_channels_json = timer[17] if len(timer) > 17 else None
             source_chat_id = timer[18] if len(timer) > 18 else None
             source_message_id = timer[19] if len(timer) > 19 else None
             pin = timer[20] if len(timer) > 20 else False
-            pin_duration = timer[21] if len(timer) > 21 else 3600
+            pin_duration = timer[21] if len(timer) > 21 else 0
             delete_after = timer[22] if len(timer) > 22 else 0
             
-            logging.info(f"⏰ Executing timer #{timer_id}")
+            logging.info(f"⏰ Executing timer #{timer_id} (Ad #{ad_id})")
             
-            channels = json.loads(channels_json) if channels_json else []
+            channels = json.loads(channels_json) if channels_json else None
             if not channels:
-                default_ch = self.bot.channel_manager.get_default_channel()
-                if default_ch:
-                    channels = [default_ch]
+                channels = [self.bot.channel_manager.get_default_channel()]
             
-            success_count = 0
             for channel in channels:
-                if channel and source_chat_id and source_message_id:
-                    success, new_message_id = self.bot.forward_message_to_channel_with_response(
-                        channel, str(source_chat_id), source_message_id
-                    )
-                    
-                    if success and new_message_id:
-                        success_count += 1
+                if channel:
+                    result = self.bot.forward_message_to_channel_with_result(channel, source_chat_id, source_message_id)
+                    if result:
+                        new_message_id = result
                         self.bot.channel_manager.update_post_count(channel)
                         
-                        if pin and pin_duration > 0:
+                        self.bot.record_posted_message(
+                            new_message_id, channel, ad_id, 
+                            pin=pin, pin_duration=pin_duration, 
+                            delete_after=delete_after
+                        )
+                        
+                        if pin:
                             self.bot.pin_message(channel, new_message_id, pin_duration)
+                            if pin_duration > 0:
+                                self.bot.schedule_unpin(channel, new_message_id, ad_id, pin_duration)
                         
                         if delete_after > 0:
-                            self.bot.schedule_message_deletion(channel, new_message_id, ad_id, delete_after)
+                            self.bot.schedule_delete(channel, new_message_id, ad_id, delete_after)
                         
-                        self.bot.record_posted_message(new_message_id, channel, ad_id, pin, pin_duration, delete_after)
+                        logging.info(f"✅ Timer #{timer_id} posted to {channel}")
             
-            total_runs = timer[6] if len(timer) > 6 else 0
-            max_runs = timer[7] if len(timer) > 7 else None
+            # Update timer stats
+            update_conn = sqlite3.connect(get_db_path(), check_same_thread=False)
+            update_cursor = update_conn.cursor()
+            
             new_total = (total_runs or 0) + 1
-            is_active = 0 if max_runs and new_total >= max_runs else 1
+            is_active_timer = 0 if max_runs and new_total >= max_runs else 1
             
-            self.bot.cursor.execute('''
-                UPDATE timers SET last_run = ?, total_runs = ?, is_active = ? WHERE id = ?
-            ''', (datetime.now().isoformat(), new_total, is_active, timer_id))
-            self.bot.conn.commit()
+            update_cursor.execute('''
+                UPDATE timers 
+                SET last_run = ?, total_runs = ?, is_active = ?
+                WHERE id = ?
+            ''', (datetime.now().isoformat(), new_total, is_active_timer, timer_id))
+            update_conn.commit()
+            update_conn.close()
             
-            logging.info(f"✅ Timer #{timer_id} posted to {success_count}/{len(channels)} channels")
-            
-            if is_active:
+            if is_active_timer:
                 self._update_timer_schedule(timer_id)
                 
         except Exception as e:
@@ -144,13 +212,17 @@ class AccurateTimer:
     def _update_timer_schedule(self, timer_id):
         """Update the next run time based on interval"""
         try:
-            self.bot.cursor.execute('''
+            conn = sqlite3.connect(get_db_path(), check_same_thread=False)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
                 SELECT interval_value, interval_unit, next_run, total_runs, max_runs
                 FROM timers WHERE id = ?
             ''', (timer_id,))
             
-            result = self.bot.cursor.fetchone()
+            result = cursor.fetchone()
             if not result:
+                conn.close()
                 return
             
             interval_value, interval_unit, last_next_run, total_runs, max_runs = result
@@ -173,25 +245,38 @@ class AccurateTimer:
             if max_runs and (total_runs + 1) >= max_runs:
                 is_active = 0
             
-            self.bot.cursor.execute('''
+            cursor.execute('''
                 UPDATE timers SET next_run = ?, is_active = ? WHERE id = ?
             ''', (next_time.isoformat(), is_active, timer_id))
-            self.bot.conn.commit()
+            conn.commit()
+            conn.close()
             
         except Exception as e:
             logging.error(f"Error updating timer schedule: {e}")
 
+@dataclass
+class PostRecord:
+    message_id: int
+    channel_id: str
+    ad_id: int
+    posted_at: datetime
+    scheduled_delete_at: Optional[datetime]
+    scheduled_unpin_at: Optional[datetime]
+    is_pinned: bool = False
+
 class ChannelManager:
-    """Manage multiple channels"""
-    
-    def __init__(self, db_connection):
-        self.conn = db_connection
-        self.cursor = db_connection.cursor()
+    def __init__(self, db_path):
+        self.db_path = db_path
         self.init_channel_table()
     
+    def get_connection(self):
+        return sqlite3.connect(self.db_path, check_same_thread=False)
+    
     def init_channel_table(self):
-        """Initialize channels table"""
-        self.cursor.execute('''
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS channels (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 channel_id TEXT UNIQUE,
@@ -204,44 +289,51 @@ class ChannelManager:
                 auto_pin BOOLEAN DEFAULT 0,
                 auto_delete BOOLEAN DEFAULT 0,
                 default_pin_duration INTEGER DEFAULT 3600,
-                default_delete_after INTEGER DEFAULT 86400
+                default_delete_after INTEGER DEFAULT 86400,
+                max_pinned_posts INTEGER DEFAULT 1,
+                settings TEXT
             )
-        ''')
+        ')
         
-        self.cursor.execute("PRAGMA table_info(channels)")
-        existing_columns = [col[1] for col in self.cursor.fetchall()]
+        cursor.execute("PRAGMA table_info(channels)")
+        existing_columns = [col[1] for col in cursor.fetchall()]
         
         new_columns = {
             'auto_pin': 'BOOLEAN DEFAULT 0',
             'auto_delete': 'BOOLEAN DEFAULT 0',
             'default_pin_duration': 'INTEGER DEFAULT 3600',
-            'default_delete_after': 'INTEGER DEFAULT 86400'
+            'default_delete_after': 'INTEGER DEFAULT 86400',
+            'max_pinned_posts': 'INTEGER DEFAULT 1',
+            'settings': 'TEXT'
         }
         
         for col_name, col_type in new_columns.items():
             if col_name not in existing_columns:
                 try:
-                    self.cursor.execute(f"ALTER TABLE channels ADD COLUMN {col_name} {col_type}")
+                    cursor.execute(f"ALTER TABLE channels ADD COLUMN {col_name} {col_type}")
                 except Exception as e:
-                    pass
+                    logging.warning(f"Could not add {col_name}: {e}")
         
-        self.cursor.execute('SELECT COUNT(*) FROM channels WHERE is_default = 1')
-        if self.cursor.fetchone()[0] == 0:
-            self.cursor.execute('''
-                INSERT INTO channels (channel_id, name, is_default, created_at)
-                VALUES ('@default', 'Default Channel', 1, ?)
+        cursor.execute('SELECT COUNT(*) FROM channels WHERE is_default = 1')
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO channels (channel_id, name, is_default, created_at, settings)
+                VALUES ('@default', 'Default Channel', 1, ?, '{}')
             ''', (datetime.now().isoformat(),))
-            self.conn.commit()
         
-        self.conn.commit()
+        conn.commit()
+        conn.close()
     
     def add_channel(self, channel_id: str, name: str = None, description: str = None) -> bool:
         try:
-            self.cursor.execute('''
-                INSERT INTO channels (channel_id, name, description, created_at)
-                VALUES (?, ?, ?, ?)
-            ''', (channel_id, name or channel_id, description, datetime.now().isoformat()))
-            self.conn.commit()
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO channels (channel_id, name, description, created_at, settings)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (channel_id, name or channel_id, description, datetime.now().isoformat(), '{}'))
+            conn.commit()
+            conn.close()
             return True
         except Exception as e:
             logging.error(f"Failed to add channel: {e}")
@@ -249,14 +341,17 @@ class ChannelManager:
     
     def remove_channel(self, channel_id: str) -> bool:
         try:
-            self.cursor.execute('SELECT is_default FROM channels WHERE channel_id = ?', (channel_id,))
-            result = self.cursor.fetchone()
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT is_default FROM channels WHERE channel_id = ?', (channel_id,))
+            result = cursor.fetchone()
             if result and result[0] == 1:
-                self.send_message(chat_id, "❌ Cannot remove default channel")
+                conn.close()
                 return False
             
-            self.cursor.execute('DELETE FROM channels WHERE channel_id = ?', (channel_id,))
-            self.conn.commit()
+            cursor.execute('DELETE FROM channels WHERE channel_id = ?', (channel_id,))
+            conn.commit()
+            conn.close()
             return True
         except Exception as e:
             logging.error(f"Failed to remove channel: {e}")
@@ -264,9 +359,12 @@ class ChannelManager:
     
     def set_default_channel(self, channel_id: str) -> bool:
         try:
-            self.cursor.execute('UPDATE channels SET is_default = 0')
-            self.cursor.execute('UPDATE channels SET is_default = 1, is_active = 1 WHERE channel_id = ?', (channel_id,))
-            self.conn.commit()
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('UPDATE channels SET is_default = 0')
+            cursor.execute('UPDATE channels SET is_default = 1, is_active = 1 WHERE channel_id = ?', (channel_id,))
+            conn.commit()
+            conn.close()
             return True
         except Exception as e:
             logging.error(f"Failed to set default channel: {e}")
@@ -274,40 +372,203 @@ class ChannelManager:
     
     def toggle_channel(self, channel_id: str, active: bool) -> bool:
         try:
-            self.cursor.execute('UPDATE channels SET is_active = ? WHERE channel_id = ?', (1 if active else 0, channel_id))
-            self.conn.commit()
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('UPDATE channels SET is_active = ? WHERE channel_id = ?', (1 if active else 0, channel_id))
+            conn.commit()
+            conn.close()
             return True
         except Exception as e:
             logging.error(f"Failed to toggle channel: {e}")
             return False
     
+    def update_channel_settings(self, channel_id: str, settings: Dict) -> bool:
+        try:
+            current = self.get_channel_settings(channel_id)
+            current.update(settings)
+            
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE channels 
+                SET auto_pin = ?, auto_delete = ?, default_pin_duration = ?, 
+                    default_delete_after = ?, max_pinned_posts = ?, settings = ?
+                WHERE channel_id = ?
+            ''', (
+                1 if current.get('auto_pin', False) else 0,
+                1 if current.get('auto_delete', False) else 0,
+                current.get('default_pin_duration', 3600),
+                current.get('default_delete_after', 86400),
+                current.get('max_pinned_posts', 1),
+                json.dumps(current),
+                channel_id
+            ))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logging.error(f"Failed to update channel settings: {e}")
+            return False
+    
+    def get_channel_settings(self, channel_id: str) -> Dict:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT auto_pin, auto_delete, default_pin_duration, default_delete_after, max_pinned_posts, settings, post_count
+            FROM channels WHERE channel_id = ?
+        ''', (channel_id,))
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result and len(result) >= 6:
+            return {
+                'auto_pin': bool(result[0]),
+                'auto_delete': bool(result[1]),
+                'default_pin_duration': result[2],
+                'default_delete_after': result[3],
+                'max_pinned_posts': result[4],
+                'settings': json.loads(result[5]) if result[5] else {},
+                'post_count': result[6] if len(result) > 6 else 0
+            }
+        return {
+            'auto_pin': False,
+            'auto_delete': False,
+            'default_pin_duration': 3600,
+            'default_delete_after': 86400,
+            'max_pinned_posts': 1,
+            'settings': {},
+            'post_count': 0
+        }
+    
     def get_all_channels(self, only_active: bool = True) -> List[Dict]:
-        query = 'SELECT channel_id, name, is_active, is_default, description, post_count FROM channels'
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        query = 'SELECT channel_id, name, is_active, is_default, description, post_count, auto_pin, auto_delete FROM channels'
         if only_active:
             query += ' WHERE is_active = 1'
         query += ' ORDER BY is_default DESC, name ASC'
         
-        self.cursor.execute(query)
+        cursor.execute(query)
         channels = []
-        for row in self.cursor.fetchall():
+        for row in cursor.fetchall():
             channels.append({
                 'channel_id': row[0],
                 'name': row[1],
                 'is_active': bool(row[2]),
                 'is_default': bool(row[3]),
                 'description': row[4],
-                'post_count': row[5]
+                'post_count': row[5],
+                'auto_pin': bool(row[6]) if len(row) > 6 else False,
+                'auto_delete': bool(row[7]) if len(row) > 7 else False
             })
+        conn.close()
         return channels
     
     def get_default_channel(self) -> str:
-        self.cursor.execute('SELECT channel_id FROM channels WHERE is_default = 1 AND is_active = 1')
-        result = self.cursor.fetchone()
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT channel_id FROM channels WHERE is_default = 1 AND is_active = 1')
+        result = cursor.fetchone()
+        conn.close()
         return result[0] if result else None
     
     def update_post_count(self, channel_id: str):
-        self.cursor.execute('UPDATE channels SET post_count = post_count + 1 WHERE channel_id = ?', (channel_id,))
-        self.conn.commit()
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('UPDATE channels SET post_count = post_count + 1 WHERE channel_id = ?', (channel_id,))
+        conn.commit()
+        conn.close()
+
+class ScheduleManager:
+    def __init__(self, bot_instance):
+        self.bot = bot_instance
+        self.running = True
+        self.scheduler_thread = None
+        
+    def start_scheduler(self):
+        self.scheduler_thread = threading.Thread(target=self._process_scheduled_tasks, daemon=True)
+        self.scheduler_thread.start()
+        logging.info("📅 Schedule manager started")
+    
+    def _process_scheduled_tasks(self):
+        while self.running:
+            try:
+                now = datetime.now()
+                
+                # Process scheduled deletes
+                conn = sqlite3.connect(get_db_path(), check_same_thread=False)
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT id, message_id, channel_id, ad_id
+                    FROM posted_messages
+                    WHERE scheduled_delete_at IS NOT NULL 
+                    AND scheduled_delete_at <= ?
+                    AND is_deleted = 0
+                ''', (now.isoformat(),))
+                to_delete = cursor.fetchall()
+                conn.close()
+                
+                for record in to_delete:
+                    self._execute_delete(record)
+                
+                # Process scheduled unpins
+                conn2 = sqlite3.connect(get_db_path(), check_same_thread=False)
+                cursor2 = conn2.cursor()
+                cursor2.execute('''
+                    SELECT id, message_id, channel_id, ad_id
+                    FROM posted_messages
+                    WHERE scheduled_unpin_at IS NOT NULL 
+                    AND scheduled_unpin_at <= ?
+                    AND is_pinned = 1
+                    AND is_deleted = 0
+                ''', (now.isoformat(),))
+                to_unpin = cursor2.fetchall()
+                conn2.close()
+                
+                for record in to_unpin:
+                    self._execute_unpin(record)
+                
+                time.sleep(30)
+                
+            except Exception as e:
+                logging.error(f"Scheduler error: {e}")
+                time.sleep(60)
+    
+    def _execute_delete(self, record):
+        try:
+            record_id, message_id, channel_id, ad_id = record
+            if message_id and channel_id:
+                if self.bot.delete_message(channel_id, message_id):
+                    conn = sqlite3.connect(get_db_path(), check_same_thread=False)
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        UPDATE posted_messages 
+                        SET is_deleted = 1, deleted_at = ?
+                        WHERE id = ?
+                    ''', (datetime.now().isoformat(), record_id))
+                    conn.commit()
+                    conn.close()
+                    logging.info(f"🗑️ Auto-deleted message {message_id} from {channel_id}")
+        except Exception as e:
+            logging.error(f"Error executing delete: {e}")
+    
+    def _execute_unpin(self, record):
+        try:
+            record_id, message_id, channel_id, ad_id = record
+            if message_id and channel_id:
+                if self.bot.unpin_message(channel_id, message_id):
+                    conn = sqlite3.connect(get_db_path(), check_same_thread=False)
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        UPDATE posted_messages 
+                        SET is_pinned = 0, unpinned_at = ?
+                        WHERE id = ?
+                    ''', (datetime.now().isoformat(), record_id))
+                    conn.commit()
+                    conn.close()
+                    logging.info(f"📌 Auto-unpinned message {message_id} from {channel_id}")
+        except Exception as e:
+            logging.error(f"Error executing unpin: {e}")
 
 class ForwardAdBot:
     def __init__(self, bot_token: str, admin_id: int):
@@ -316,17 +577,22 @@ class ForwardAdBot:
         self.base_url = f"https://api.telegram.org/bot{bot_token}"
         self.running = True
         self.pending_requests = {}
+        self.db_path = get_db_path()
         self.init_database()
-        self.channel_manager = ChannelManager(self.conn)
+        self.channel_manager = ChannelManager(self.db_path)
         self.timer_manager = AccurateTimer(self)
-    
+        self.schedule_manager = ScheduleManager(self)
+        
+        # For webhook mode
+        self.webhook_mode = 'RENDER' in os.environ
+        
     def init_database(self):
-        """Initialize SQLite database"""
-        self.conn = sqlite3.connect('ad_bot.db', check_same_thread=False)
-        self.cursor = self.conn.cursor()
+        """Initialize all database tables"""
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        cursor = conn.cursor()
         
         # Ads table
-        self.cursor.execute('''
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS ads (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 content TEXT,
@@ -346,12 +612,32 @@ class ForwardAdBot:
                 media_file_id TEXT,
                 pin BOOLEAN DEFAULT 0,
                 pin_duration INTEGER DEFAULT 0,
-                delete_after INTEGER DEFAULT 0
+                delete_after INTEGER DEFAULT 0,
+                schedule_unpin BOOLEAN DEFAULT 0,
+                schedule_delete BOOLEAN DEFAULT 0
             )
         ''')
         
-        # Posted messages table
-        self.cursor.execute('''
+        cursor.execute("PRAGMA table_info(ads)")
+        existing_columns = [col[1] for col in cursor.fetchall()]
+        
+        new_ad_columns = {
+            'pin': 'BOOLEAN DEFAULT 0',
+            'pin_duration': 'INTEGER DEFAULT 0',
+            'delete_after': 'INTEGER DEFAULT 0',
+            'schedule_unpin': 'BOOLEAN DEFAULT 0',
+            'schedule_delete': 'BOOLEAN DEFAULT 0'
+        }
+        
+        for col_name, col_type in new_ad_columns.items():
+            if col_name not in existing_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE ads ADD COLUMN {col_name} {col_type}")
+                except Exception as e:
+                    logging.warning(f"Could not add {col_name}: {e}")
+        
+        # Posted messages tracking table
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS posted_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 message_id INTEGER,
@@ -363,12 +649,16 @@ class ForwardAdBot:
                 is_pinned BOOLEAN DEFAULT 0,
                 is_deleted BOOLEAN DEFAULT 0,
                 deleted_at TEXT,
-                unpinned_at TEXT
+                unpinned_at TEXT,
+                pin_message_id INTEGER
             )
         ''')
         
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_posted_messages_channel ON posted_messages(channel_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_posted_messages_deleted ON posted_messages(is_deleted)')
+        
         # Timers table
-        self.cursor.execute('''
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS timers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ad_id INTEGER,
@@ -389,365 +679,157 @@ class ForwardAdBot:
             )
         ''')
         
+        cursor.execute("PRAGMA table_info(timers)")
+        existing_timer_columns = [col[1] for col in cursor.fetchall()]
+        
+        new_timer_columns = {
+            'pin': 'BOOLEAN DEFAULT 0',
+            'pin_duration': 'INTEGER DEFAULT 0',
+            'delete_after': 'INTEGER DEFAULT 0'
+        }
+        
+        for col_name, col_type in new_timer_columns.items():
+            if col_name not in existing_timer_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE timers ADD COLUMN {col_name} {col_type}")
+                except Exception as e:
+                    logging.warning(f"Could not add {col_name}: {e}")
+        
         # Statistics table
-        self.cursor.execute('''
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS stats (
                 date TEXT PRIMARY KEY,
                 ads_posted INTEGER DEFAULT 0,
                 ads_failed INTEGER DEFAULT 0,
                 ads_received INTEGER DEFAULT 0,
-                messages_deleted INTEGER DEFAULT 0
+                messages_deleted INTEGER DEFAULT 0,
+                messages_unpinned INTEGER DEFAULT 0
             )
         ''')
         
-        self.conn.commit()
-        logging.info("Database initialized")
-    
+        # Analytics table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS analytics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT,
+                channel_id TEXT,
+                metric_type TEXT,
+                value INTEGER,
+                metadata TEXT
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        logging.info(f"Database initialized at {self.db_path}")
+
     # ============ TELEGRAM API METHODS ============
     
-    def forward_message_to_channel_with_response(self, channel_id: str, from_chat_id: str, message_id: int) -> Tuple[bool, Optional[int]]:
-        """Forward a message and return the new message ID"""
+    def api_request(self, method: str, payload: Dict = None, max_retries: int = 3) -> Optional[Dict]:
+        """Make API request with retries"""
+        url = f"{self.base_url}/{method}"
+        
+        for attempt in range(max_retries):
+            try:
+                if method in ["sendMessage", "forwardMessage", "pinChatMessage", "unpinChatMessage", "deleteMessage"]:
+                    response = requests.post(url, json=payload, timeout=30)
+                else:
+                    response = requests.get(url, params=payload, timeout=30)
+                
+                if response.status_code == 200:
+                    return response.json()
+                elif response.status_code == 429:
+                    retry_after = int(response.headers.get('Retry-After', 5))
+                    time.sleep(retry_after)
+                else:
+                    logging.warning(f"API {method} returned {response.status_code}")
+                    
+            except Exception as e:
+                logging.error(f"API request error on attempt {attempt + 1}: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 * (attempt + 1))
+        
+        return None
+    
+    def forward_message_to_channel_with_result(self, channel_id: str, from_chat_id: str, message_id: int) -> Optional[int]:
         if not from_chat_id or not message_id:
-            return False, None
+            return None
             
-        url = f"{self.base_url}/forwardMessage"
         payload = {
             "chat_id": channel_id,
             "from_chat_id": from_chat_id,
             "message_id": message_id
         }
         
-        try:
-            response = requests.post(url, json=payload, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('ok'):
-                    result = data.get('result', {})
-                    new_message_id = result.get('message_id')
-                    return True, new_message_id
-            return False, None
-        except Exception as e:
-            logging.warning(f"Forward exception: {e}")
-            return False, None
+        result = self.api_request("forwardMessage", payload)
+        if result and result.get('ok'):
+            new_message_id = result.get('result', {}).get('message_id')
+            return new_message_id
+        return None
     
-    def forward_message_to_channel(self, channel_id: str, from_chat_id: str, message_id: int) -> bool:
-        success, _ = self.forward_message_to_channel_with_response(channel_id, from_chat_id, message_id)
-        return success
-    
-    def pin_message(self, channel_id: str, message_id: int, duration: int = 0) -> bool:
-        """Pin a message to channel"""
-        url = f"{self.base_url}/pinChatMessage"
+    def pin_message(self, channel_id: str, message_id: int, duration: int = 0, disable_notification: bool = True) -> bool:
         payload = {
             "chat_id": channel_id,
             "message_id": message_id,
-            "disable_notification": True
+            "disable_notification": disable_notification
         }
-        
-        try:
-            response = requests.post(url, json=payload, timeout=10)
-            if response.status_code == 200:
-                logging.info(f"📌 Pinned message {message_id} to {channel_id}")
-                if duration > 0:
-                    self.schedule_message_unpin(channel_id, message_id, duration)
-                return True
-            return False
-        except Exception as e:
-            logging.warning(f"Pin exception: {e}")
-            return False
+        result = self.api_request("pinChatMessage", payload)
+        return result and result.get('ok')
     
     def unpin_message(self, channel_id: str, message_id: int = None) -> bool:
-        """Unpin message from channel"""
-        url = f"{self.base_url}/unpinChatMessage"
         payload = {"chat_id": channel_id}
         if message_id:
             payload["message_id"] = message_id
-        
-        try:
-            response = requests.post(url, json=payload, timeout=10)
-            return response.status_code == 200
-        except Exception as e:
-            logging.warning(f"Unpin exception: {e}")
-            return False
+        result = self.api_request("unpinChatMessage", payload)
+        return result and result.get('ok')
     
     def delete_message(self, channel_id: str, message_id: int) -> bool:
-        """Delete a message"""
-        url = f"{self.base_url}/deleteMessage"
         payload = {
             "chat_id": channel_id,
             "message_id": message_id
         }
-        
-        try:
-            response = requests.post(url, json=payload, timeout=10)
-            if response.status_code == 200:
-                logging.info(f"🗑️ Deleted message {message_id}")
-                return True
+        result = self.api_request("deleteMessage", payload)
+        return result and result.get('ok')
+    
+    def send_message(self, chat_id: int, text: str, keyboard: Dict = None):
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML"
+        }
+        if keyboard:
+            payload["reply_markup"] = keyboard
+        self.api_request("sendMessage", payload)
+    
+    def answer_callback(self, callback_id: str, text: str = None, show_alert: bool = False):
+        payload = {"callback_query_id": callback_id}
+        if text:
+            payload["text"] = text
+            payload["show_alert"] = show_alert
+        self.api_request("answerCallbackQuery", payload)
+    
+    def set_webhook(self, webhook_url: str):
+        """Set webhook for the bot"""
+        payload = {"url": webhook_url}
+        result = self.api_request("setWebhook", payload)
+        if result and result.get('ok'):
+            logging.info(f"✅ Webhook set to {webhook_url}")
+            return True
+        else:
+            logging.error(f"Failed to set webhook: {result}")
             return False
-        except Exception as e:
-            logging.warning(f"Delete exception: {e}")
-            return False
     
-    def schedule_message_unpin(self, channel_id: str, message_id: int, duration_seconds: int):
-        """Schedule a message to be unpinned"""
-        def unpin_task():
-            time.sleep(duration_seconds)
-            self.unpin_message(channel_id, message_id)
-            self.cursor.execute('''
-                UPDATE posted_messages SET is_pinned = 0, unpinned_at = ?
-                WHERE channel_id = ? AND message_id = ?
-            ''', (datetime.now().isoformat(), channel_id, message_id))
-            self.conn.commit()
-        
-        threading.Thread(target=unpin_task, daemon=True).start()
-        logging.info(f"⏰ Scheduled unpin in {duration_seconds}s")
+    def delete_webhook(self):
+        """Delete webhook (to use polling)"""
+        result = self.api_request("deleteWebhook")
+        if result and result.get('ok'):
+            logging.info("✅ Webhook deleted")
+            return True
+        return False
     
-    def schedule_message_deletion(self, channel_id: str, message_id: int, ad_id: int, delete_after_seconds: int):
-        """Schedule a message for deletion"""
-        def delete_task():
-            time.sleep(delete_after_seconds)
-            self.delete_message(channel_id, message_id)
-            self.cursor.execute('''
-                UPDATE posted_messages SET is_deleted = 1, deleted_at = ?
-                WHERE channel_id = ? AND message_id = ? AND ad_id = ?
-            ''', (datetime.now().isoformat(), channel_id, message_id, ad_id))
-            self.conn.commit()
-        
-        threading.Thread(target=delete_task, daemon=True).start()
-        logging.info(f"⏰ Scheduled deletion in {delete_after_seconds}s")
-    
-    def record_posted_message(self, message_id: int, channel_id: str, ad_id: int, pin: bool = False, pin_duration: int = 0, delete_after: int = 0):
-        """Record a posted message"""
-        self.cursor.execute('''
-            INSERT INTO posted_messages (message_id, channel_id, ad_id, posted_at, is_pinned)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (message_id, channel_id, ad_id, datetime.now().isoformat(), 1 if pin else 0))
-        self.conn.commit()
-    
-    # ============ DELETE POSTS METHODS ============
-    
-    def show_delete_posts_menu(self, chat_id: int):
-        """Show delete posts menu"""
-        self.cursor.execute('SELECT COUNT(*) FROM posted_messages WHERE is_deleted = 0')
-        total_active = self.cursor.fetchone()[0]
-        
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": "🗑️ Delete Single Post", "callback_data": "delete_single_post"}],
-                [{"text": "📊 Delete by Channel", "callback_data": "delete_by_channel"}],
-                [{"text": "📌 Delete Pinned Posts", "callback_data": "delete_pinned_posts"}],
-                [{"text": "⏲️ Delete Expired Posts", "callback_data": "delete_expired_posts"}],
-                [{"text": "🗑️ Delete ALL Posts", "callback_data": "delete_all_posts_confirm"}],
-                [{"text": "📋 List All Posts", "callback_data": "list_all_posts"}],
-                [{"text": "◀️ Back to Main", "callback_data": "back_to_main"}]
-            ]
-        }
-        
-        text = f"""
-🗑️ <b>Delete Posts Management</b>
-
-<b>Active Posts:</b> {total_active}
-
-Choose an option:
-• Delete Single Post - Select from list
-• Delete by Channel - Remove all from a channel
-• Delete Pinned Posts - Remove all pinned messages
-• Delete Expired Posts - Remove old posts
-• Delete ALL Posts - ⚠️ Remove everything
-        """
-        self.send_message(chat_id, text, keyboard)
-    
-    def list_all_posts(self, chat_id: int, page: int = 0):
-        """List all active posts"""
-        posts_per_page = 10
-        offset = page * posts_per_page
-        
-        self.cursor.execute('''
-            SELECT id, message_id, channel_id, posted_at, is_pinned
-            FROM posted_messages WHERE is_deleted = 0
-            ORDER BY posted_at DESC LIMIT ? OFFSET ?
-        ''', (posts_per_page, offset))
-        
-        posts = self.cursor.fetchall()
-        
-        self.cursor.execute('SELECT COUNT(*) FROM posted_messages WHERE is_deleted = 0')
-        total = self.cursor.fetchone()[0]
-        
-        if not posts:
-            self.send_message(chat_id, "📭 No active posts")
-            return
-        
-        text = f"📋 <b>Active Posts (Page {page + 1})</b>\n\n"
-        for post in posts:
-            post_id, msg_id, channel_id, posted_at, is_pinned = post
-            pin_icon = "📌" if is_pinned else "📄"
-            text += f"{pin_icon} <b>ID: {post_id}</b> | {channel_id}\n"
-            text += f"   Msg: {msg_id} | Posted: {posted_at[:16]}\n"
-            text += "─" * 25 + "\n"
-        
-        keyboard = {"inline_keyboard": []}
-        nav_buttons = []
-        if page > 0:
-            nav_buttons.append({"text": "◀️ Prev", "callback_data": f"list_posts_page_{page - 1}"})
-        if (page + 1) * posts_per_page < total:
-            nav_buttons.append({"text": "Next ▶️", "callback_data": f"list_posts_page_{page + 1}"})
-        if nav_buttons:
-            keyboard["inline_keyboard"].append(nav_buttons)
-        
-        keyboard["inline_keyboard"].append([
-            {"text": "🗑️ Delete Selected", "callback_data": "delete_single_post"},
-            {"text": "◀️ Back", "callback_data": "delete_posts_menu"}
-        ])
-        
-        self.send_message(chat_id, text, keyboard)
-    
-    def show_delete_by_channel(self, chat_id: int):
-        """Show channels for deletion"""
-        channels = self.channel_manager.get_all_channels(only_active=False)
-        keyboard = {"inline_keyboard": []}
-        
-        for ch in channels:
-            self.cursor.execute('SELECT COUNT(*) FROM posted_messages WHERE channel_id = ? AND is_deleted = 0', (ch['channel_id'],))
-            count = self.cursor.fetchone()[0]
-            if count > 0:
-                keyboard["inline_keyboard"].append([
-                    {"text": f"📢 {ch['name']} ({count} posts)", "callback_data": f"delete_channel_{ch['channel_id']}"}
-                ])
-        
-        if not keyboard["inline_keyboard"]:
-            self.send_message(chat_id, "📭 No posts found")
-            return
-        
-        keyboard["inline_keyboard"].append([{"text": "◀️ Back", "callback_data": "delete_posts_menu"}])
-        self.send_message(chat_id, "🗑️ <b>Select channel to delete posts from:</b>", keyboard)
-    
-    def confirm_delete_channel(self, chat_id: int, channel_id: str):
-        """Confirm channel deletion"""
-        self.cursor.execute('SELECT COUNT(*) FROM posted_messages WHERE channel_id = ? AND is_deleted = 0', (channel_id,))
-        count = self.cursor.fetchone()[0]
-        
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": "✅ YES, Delete All", "callback_data": f"confirm_del_channel_{channel_id}"}],
-                [{"text": "❌ Cancel", "callback_data": "delete_posts_menu"}]
-            ]
-        }
-        
-        self.send_message(chat_id, f"⚠️ Delete {count} posts from {channel_id}? This cannot be undone!", keyboard)
-    
-    def execute_delete_channel(self, chat_id: int, channel_id: str):
-        """Execute channel deletion"""
-        self.cursor.execute('SELECT id, message_id, channel_id FROM posted_messages WHERE channel_id = ? AND is_deleted = 0', (channel_id,))
-        posts = self.cursor.fetchall()
-        
-        deleted = 0
-        for post_id, msg_id, ch_id in posts:
-            if msg_id and self.delete_message(ch_id, msg_id):
-                self.cursor.execute('UPDATE posted_messages SET is_deleted = 1, deleted_at = ? WHERE id = ?', (datetime.now().isoformat(), post_id))
-                deleted += 1
-        
-        self.conn.commit()
-        self.send_message(chat_id, f"✅ Deleted {deleted} posts from {channel_id}")
-        self.show_delete_posts_menu(chat_id)
-    
-    def show_delete_pinned_posts(self, chat_id: int):
-        """Confirm delete pinned posts"""
-        self.cursor.execute('SELECT COUNT(*) FROM posted_messages WHERE is_pinned = 1 AND is_deleted = 0')
-        count = self.cursor.fetchone()[0]
-        
-        if count == 0:
-            self.send_message(chat_id, "📭 No pinned posts")
-            return
-        
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": "✅ YES, Delete All Pinned", "callback_data": "confirm_delete_pinned"}],
-                [{"text": "❌ Cancel", "callback_data": "delete_posts_menu"}]
-            ]
-        }
-        
-        self.send_message(chat_id, f"⚠️ Delete {count} pinned posts? This will remove them from channels!", keyboard)
-    
-    def execute_delete_pinned(self, chat_id: int):
-        """Execute delete pinned posts"""
-        self.cursor.execute('SELECT id, message_id, channel_id FROM posted_messages WHERE is_pinned = 1 AND is_deleted = 0')
-        posts = self.cursor.fetchall()
-        
-        deleted = 0
-        for post_id, msg_id, channel_id in posts:
-            if msg_id:
-                self.unpin_message(channel_id, msg_id)
-                if self.delete_message(channel_id, msg_id):
-                    self.cursor.execute('UPDATE posted_messages SET is_deleted = 1, is_pinned = 0, deleted_at = ? WHERE id = ?', (datetime.now().isoformat(), post_id))
-                    deleted += 1
-        
-        self.conn.commit()
-        self.send_message(chat_id, f"✅ Deleted {deleted} pinned posts")
-        self.show_delete_posts_menu(chat_id)
-    
-    def show_delete_expired_posts(self, chat_id: int):
-        """Show expired posts options"""
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": "🗑️ Older than 7 days", "callback_data": "delete_expired_7"}],
-                [{"text": "🗑️ Older than 30 days", "callback_data": "delete_expired_30"}],
-                [{"text": "🗑️ Older than 60 days", "callback_data": "delete_expired_60"}],
-                [{"text": "◀️ Back", "callback_data": "delete_posts_menu"}]
-            ]
-        }
-        self.send_message(chat_id, "⏲️ <b>Delete posts older than:</b>", keyboard)
-    
-    def execute_delete_expired(self, chat_id: int, days: int):
-        """Delete expired posts"""
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
-        self.cursor.execute('SELECT id, message_id, channel_id FROM posted_messages WHERE posted_at < ? AND is_deleted = 0', (cutoff,))
-        posts = self.cursor.fetchall()
-        
-        deleted = 0
-        for post_id, msg_id, channel_id in posts:
-            if msg_id and self.delete_message(channel_id, msg_id):
-                self.cursor.execute('UPDATE posted_messages SET is_deleted = 1, deleted_at = ? WHERE id = ?', (datetime.now().isoformat(), post_id))
-                deleted += 1
-        
-        self.conn.commit()
-        self.send_message(chat_id, f"✅ Deleted {deleted} posts older than {days} days")
-        self.show_delete_posts_menu(chat_id)
-    
-    def show_delete_all_confirm(self, chat_id: int):
-        """Confirm delete all posts"""
-        self.cursor.execute('SELECT COUNT(*) FROM posted_messages WHERE is_deleted = 0')
-        total = self.cursor.fetchone()[0]
-        
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": "⚠️ YES, DELETE EVERYTHING", "callback_data": "confirm_delete_all"}],
-                [{"text": "❌ Cancel", "callback_data": "delete_posts_menu"}]
-            ]
-        }
-        
-        self.send_message(chat_id, f"🚨 <b>DELETE ALL {total} POSTS?</b>\n\nThis PERMANENTLY removes all messages from all channels!\n\nType CONFIRM to proceed:", keyboard)
-        self.pending_requests[chat_id] = {'action': 'confirm_delete_all'}
-    
-    def execute_delete_all(self, chat_id: int):
-        """Delete all posts"""
-        self.cursor.execute('SELECT id, message_id, channel_id FROM posted_messages WHERE is_deleted = 0')
-        posts = self.cursor.fetchall()
-        
-        deleted = 0
-        for post_id, msg_id, channel_id in posts:
-            if msg_id:
-                self.unpin_message(channel_id, msg_id)
-                if self.delete_message(channel_id, msg_id):
-                    self.cursor.execute('UPDATE posted_messages SET is_deleted = 1, deleted_at = ? WHERE id = ?', (datetime.now().isoformat(), post_id))
-                    deleted += 1
-        
-        self.conn.commit()
-        self.send_message(chat_id, f"✅ Deleted ALL {deleted} posts!")
-        self.show_main_menu(chat_id)
-    
-    # ============ FORWARD HANDLING ============
+    # ============ MESSAGE PARSING ============
     
     def extract_message_data(self, message: Dict) -> Dict:
-        """Extract message data"""
         data = {
             'source_chat_id': message.get('chat', {}).get('id'),
             'source_message_id': message.get('message_id'),
@@ -757,6 +839,9 @@ Choose an option:
             'media_file_id': None,
             'has_premium_emoji': False
         }
+        
+        if data['text'] and ('<tg-emoji>' in data['text'] or '⭐' in data['text']):
+            data['has_premium_emoji'] = True
         
         if 'photo' in message:
             data['media_type'] = 'photo'
@@ -773,632 +858,360 @@ Choose an option:
         
         return data
     
+    # ============ HELPER METHODS ============
+    
+    def _format_duration(self, seconds: int) -> str:
+        if seconds <= 0:
+            return "Never"
+        hours = seconds // 3600
+        days = hours // 24
+        if days > 0:
+            return f"{days} day{'s' if days > 1 else ''}"
+        elif hours > 0:
+            return f"{hours} hour{'s' if hours > 1 else ''}"
+        else:
+            return f"{seconds} second{'s' if seconds > 1 else ''}"
+    
+    # ============ SCHEDULING METHODS ============
+    
+    def schedule_delete(self, channel_id: str, message_id: int, ad_id: int, delete_after_seconds: int):
+        if delete_after_seconds <= 0:
+            return
+        
+        delete_time = datetime.now() + timedelta(seconds=delete_after_seconds)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE posted_messages 
+            SET scheduled_delete_at = ?
+            WHERE channel_id = ? AND message_id = ? AND ad_id = ?
+        ''', (delete_time.isoformat(), channel_id, message_id, ad_id))
+        conn.commit()
+        conn.close()
+    
+    def schedule_unpin(self, channel_id: str, message_id: int, ad_id: int, unpin_after_seconds: int):
+        if unpin_after_seconds <= 0:
+            return
+        
+        unpin_time = datetime.now() + timedelta(seconds=unpin_after_seconds)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE posted_messages 
+            SET scheduled_unpin_at = ?
+            WHERE channel_id = ? AND message_id = ? AND ad_id = ?
+        ''', (unpin_time.isoformat(), channel_id, message_id, ad_id))
+        conn.commit()
+        conn.close()
+    
+    def record_posted_message(self, message_id: int, channel_id: str, ad_id: int, 
+                             pin: bool = False, pin_duration: int = 0, 
+                             delete_after: int = 0) -> int:
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO posted_messages (message_id, channel_id, ad_id, posted_at, is_pinned)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (message_id, channel_id, ad_id, datetime.now().isoformat(), 1 if pin else 0))
+        record_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        if pin and pin_duration > 0:
+            self.schedule_unpin(channel_id, message_id, ad_id, pin_duration)
+        if delete_after > 0:
+            self.schedule_delete(channel_id, message_id, ad_id, delete_after)
+        
+        return record_id
+    
+    def record_analytics(self, channel_id: str, metric_type: str, value: int, metadata: Dict = None):
+        today = datetime.now().date().isoformat()
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO analytics (date, channel_id, metric_type, value, metadata)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (today, channel_id, metric_type, value, json.dumps(metadata) if metadata else '{}'))
+        conn.commit()
+        conn.close()
+    
+    # ============ SIMPLIFIED HANDLERS FOR DEMO ============
+    
     def handle_forwarded_message(self, message: Dict, chat_id: int, user_id: int):
-        """Handle forwarded message"""
         if user_id != self.admin_id:
-            self.send_message(chat_id, "⛔ Unauthorized!")
+            self.send_message(chat_id, "⛔ You're not authorized to use this bot!")
             return
         
         msg_data = self.extract_message_data(message)
-        
-        today = datetime.now().date().isoformat()
-        self.cursor.execute('INSERT INTO stats (date, ads_received) VALUES (?, 1) ON CONFLICT(date) DO UPDATE SET ads_received = ads_received + 1', (today,))
-        self.conn.commit()
-        
         self.pending_requests[chat_id] = msg_data
         
         keyboard = {
             "inline_keyboard": [
                 [{"text": "📤 Post Now", "callback_data": "forward_now"}],
-                [{"text": "📌 Post & Pin (1 Hour)", "callback_data": "forward_pin_3600"}],
-                [{"text": "📌 Post & Pin (1 Day)", "callback_data": "forward_pin_86400"}],
-                [{"text": "🗑️ Post & Auto-Delete (1 Day)", "callback_data": "forward_delete_86400"}],
-                [{"text": "📌 Pin & Delete (1 Hour Pin, 1 Day Delete)", "callback_data": "forward_pin_delete"}],
-                [{"text": "⏲️ Create Auto-Timer", "callback_data": "forward_timer"}],
+                [{"text": "📌 Post & Pin", "callback_data": "forward_pin"}],
                 [{"text": "❌ Cancel", "callback_data": "cancel"}]
             ]
         }
         
-        preview = msg_data['text'][:100] if msg_data['text'] else f"📷 {msg_data['media_type'] or 'Media'}"
-        self.send_message(chat_id, f"✅ Message received!\n\nPreview: {preview}\n\nChoose option:", keyboard)
+        preview = msg_data['text'][:200] if msg_data['text'] else f"📷 {msg_data['media_type'] or 'Media'} message"
+        text = f"✅ Message Received!\n\nPreview: {preview}\n\nWhat would you like to do?"
+        self.send_message(chat_id, text, keyboard)
     
-    def execute_forward(self, chat_id: int, pin: bool = False, pin_duration: int = 0, delete_after: int = 0):
-        """Execute forward with options"""
+    def execute_forward_enhanced(self, chat_id: int, channel_id: str = None, 
+                                 forward_all: bool = False, pin: bool = False, 
+                                 pin_duration: int = 0, delete_after: int = 0):
         if chat_id not in self.pending_requests:
-            self.send_message(chat_id, "❌ No message found")
+            self.send_message(chat_id, "❌ No message found.")
             return
         
         pending = self.pending_requests[chat_id]
-        channels = self.channel_manager.get_all_channels(only_active=True)
         
-        if not channels:
-            self.send_message(chat_id, "❌ No active channels")
-            return
+        if forward_all:
+            channels = self.channel_manager.get_all_channels(only_active=True)
+            channel_ids = [ch['channel_id'] for ch in channels]
+        else:
+            channel_ids = [channel_id] if channel_id else [self.channel_manager.get_default_channel()]
         
         success_count = 0
-        for ch in channels:
-            success, msg_id = self.forward_message_to_channel_with_response(
-                ch['channel_id'], 
-                str(pending['source_chat_id']), 
-                pending['source_message_id']
-            )
-            
-            if success and msg_id:
+        for ch_id in channel_ids:
+            new_message_id = self.forward_message_to_channel_with_result(ch_id, pending['source_chat_id'], pending['source_message_id'])
+            if new_message_id:
                 success_count += 1
-                self.channel_manager.update_post_count(ch['channel_id'])
-                
-                if pin and pin_duration > 0:
-                    self.pin_message(ch['channel_id'], msg_id, pin_duration)
-                
-                if delete_after > 0:
-                    self.schedule_message_deletion(ch['channel_id'], msg_id, 0, delete_after)
-                
-                self.record_posted_message(msg_id, ch['channel_id'], 0, pin, pin_duration, delete_after)
+                self.channel_manager.update_post_count(ch_id)
+                self.record_posted_message(new_message_id, ch_id, 0, pin, pin_duration, delete_after)
+                if pin:
+                    self.pin_message(ch_id, new_message_id, pin_duration)
         
-        today = datetime.now().date().isoformat()
-        self.cursor.execute('UPDATE stats SET ads_posted = ads_posted + ? WHERE date = ?', (success_count, today))
-        self.conn.commit()
-        
-        msg = f"✅ Posted to {success_count}/{len(channels)} channels!"
-        if pin: msg += f"\n📌 Pinned for {pin_duration//3600}h"
-        if delete_after: msg += f"\n🗑️ Will delete in {delete_after//3600}h"
-        
-        self.send_message(chat_id, msg)
+        result_msg = f"✅ Posted to {success_count}/{len(channel_ids)} channels!"
+        self.send_message(chat_id, result_msg)
         self.pending_requests.pop(chat_id, None)
     
-    def create_timer(self, chat_id: int, interval_value: int, interval_unit: str, pin: bool = False, pin_duration: int = 0, delete_after: int = 0):
-        """Create a timer"""
-        if chat_id not in self.pending_requests:
-            self.send_message(chat_id, "❌ No message found")
-            return
-        
-        pending = self.pending_requests[chat_id]
-        channels = self.channel_manager.get_all_channels(only_active=True)
-        channel_ids = [ch['channel_id'] for ch in channels]
-        channels_json = json.dumps(channel_ids)
-        
-        self.cursor.execute('''
-            INSERT INTO ads (content, ad_type, status, created_at, source_message_id, source_chat_id, target_channels, media_type, media_file_id, caption, pin, pin_duration, delete_after)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (pending.get('text', ''), 'forward', AdStatus.ACTIVE.value, datetime.now().isoformat(),
-              pending['source_message_id'], str(pending['source_chat_id']), channels_json,
-              pending.get('media_type'), pending.get('media_file_id'), pending.get('caption', ''),
-              1 if pin else 0, pin_duration, delete_after))
-        
-        ad_id = self.cursor.lastrowid
-        
-        now = datetime.now()
-        if interval_unit == 'minutes':
-            first_run = now + timedelta(minutes=interval_value)
-        elif interval_unit == 'hours':
-            first_run = now + timedelta(hours=interval_value)
-        else:
-            first_run = now + timedelta(days=interval_value)
-        
-        self.cursor.execute('''
-            INSERT INTO timers (ad_id, interval_value, interval_unit, next_run, created_at, channel_ids, created_from_time, timer_type, pin, pin_duration, delete_after)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (ad_id, interval_value, interval_unit, first_run.isoformat(), now.isoformat(), channels_json, now.isoformat(), 'forward',
-              1 if pin else 0, pin_duration, delete_after))
-        
-        timer_id = self.cursor.lastrowid
-        self.cursor.execute('UPDATE ads SET timer_id = ? WHERE id = ?', (timer_id, ad_id))
-        self.conn.commit()
-        
-        pin_text = f"📌 Auto-pin: {pin_duration//3600}h\n" if pin else ""
-        delete_text = f"🗑️ Auto-delete: {delete_after//3600}h\n" if delete_after > 0 else ""
-        
-        self.send_message(chat_id, f"✅ Timer #{timer_id} created!\n⏰ Every {interval_value} {interval_unit}\n{pin_text}{delete_text}🎯 First run: {first_run.strftime('%H:%M:%S')}")
-        self.pending_requests.pop(chat_id, None)
-    
-    # ============ CHANNEL MANAGEMENT ============
+    def show_main_menu(self, chat_id: int):
+        keyboard = {
+            "inline_keyboard": [
+                [{"text": "📤 Post Message", "callback_data": "forward_prompt"}],
+                [{"text": "🔧 Manage Channels", "callback_data": "channel_menu"}],
+                [{"text": "❓ Help", "callback_data": "help_main"}]
+            ]
+        }
+        text = "🤖 Ad Bot - Forward messages to your channels!"
+        self.send_message(chat_id, text, keyboard)
     
     def show_channel_menu(self, chat_id: int):
-        """Show channel menu"""
+        channels = self.channel_manager.get_all_channels(only_active=False)
         keyboard = {
             "inline_keyboard": [
                 [{"text": "➕ Add Channel", "callback_data": "ch_add"}],
                 [{"text": "📋 List Channels", "callback_data": "ch_list"}],
-                [{"text": "⭐ Set Default", "callback_data": "ch_default"}],
-                [{"text": "🔘 Toggle Channel", "callback_data": "ch_toggle"}],
-                [{"text": "❌ Remove Channel", "callback_data": "ch_remove"}],
                 [{"text": "◀️ Back to Main", "callback_data": "back_to_main"}]
             ]
         }
-        self.send_message(chat_id, "🔧 Channel Management", keyboard)
-    
-    def add_channel_handler(self, chat_id: int):
-        self.send_message(chat_id, "Send channel ID: @username or -1001234567890")
-        self.pending_requests[chat_id] = {'action': 'add_channel'}
-    
-    def list_channels_handler(self, chat_id: int):
-        channels = self.channel_manager.get_all_channels(only_active=False)
-        if not channels:
-            self.send_message(chat_id, "No channels")
-            return
-        
-        text = "📋 Channels:\n\n"
-        for ch in channels:
-            text += f"{'⭐' if ch['is_default'] else '📢'} {ch['name']}\n"
-            text += f"ID: {ch['channel_id']}\n"
-            text += f"Status: {'✅' if ch['is_active'] else '❌'}\n"
-            text += f"Posts: {ch['post_count']}\n\n"
-        
-        self.send_message(chat_id, text)
-    
-    def set_default_channel_handler(self, chat_id: int):
-        channels = self.channel_manager.get_all_channels(only_active=True)
-        if not channels:
-            self.send_message(chat_id, "No active channels")
-            return
-        
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": ch['name'], "callback_data": f"set_default_{ch['channel_id']}"}]
-                for ch in channels
-            ]
-        }
-        self.send_message(chat_id, "Select default channel:", keyboard)
-    
-    def toggle_channel_handler(self, chat_id: int):
-        channels = self.channel_manager.get_all_channels(only_active=False)
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": f"{'✅' if ch['is_active'] else '❌'} {ch['name']}", "callback_data": f"toggle_{ch['channel_id']}"}]
-                for ch in channels
-            ]
-        }
-        self.send_message(chat_id, "Toggle channel:", keyboard)
-    
-    def remove_channel_handler(self, chat_id: int):
-        channels = [ch for ch in self.channel_manager.get_all_channels(only_active=False) if not ch['is_default']]
-        if not channels:
-            self.send_message(chat_id, "No removable channels")
-            return
-        
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": f"❌ {ch['name']}", "callback_data": f"remove_{ch['channel_id']}"}]
-                for ch in channels
-            ]
-        }
-        self.send_message(chat_id, "Select channel to remove:", keyboard)
-    
-    # ============ TIMER MANAGEMENT ============
-    
-    def show_timer_menu(self, chat_id: int):
-        """Show timer menu"""
-        self.cursor.execute('SELECT COUNT(*) FROM timers WHERE is_active = 1')
-        active = self.cursor.fetchone()[0]
-        
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": "⏲️ Create Timer", "callback_data": "timer_create"}],
-                [{"text": "📋 List Timers", "callback_data": "timer_list"}],
-                [{"text": "⏸️ Pause Timer", "callback_data": "timer_pause"}],
-                [{"text": "❌ Delete Timer", "callback_data": "timer_delete"}],
-                [{"text": "◀️ Back to Main", "callback_data": "back_to_main"}]
-            ]
-        }
-        self.send_message(chat_id, f"⏲️ Timer Management\nActive: {active}", keyboard)
-    
-    def show_timer_interval_menu(self, chat_id: int):
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": "1 minute", "callback_data": "timer_int_1_minutes"}],
-                [{"text": "5 minutes", "callback_data": "timer_int_5_minutes"}],
-                [{"text": "10 minutes", "callback_data": "timer_int_10_minutes"}],
-                [{"text": "15 minutes", "callback_data": "timer_int_15_minutes"}],
-                [{"text": "30 minutes", "callback_data": "timer_int_30_minutes"}],
-                [{"text": "1 hour", "callback_data": "timer_int_1_hours"}],
-                [{"text": "2 hours", "callback_data": "timer_int_2_hours"}],
-                [{"text": "4 hours", "callback_data": "timer_int_4_hours"}],
-                [{"text": "6 hours", "callback_data": "timer_int_6_hours"}],
-                [{"text": "12 hours", "callback_data": "timer_int_12_hours"}],
-                [{"text": "1 day", "callback_data": "timer_int_1_days"}],
-                [{"text": "◀️ Back", "callback_data": "timer_menu"}]
-            ]
-        }
-        self.send_message(chat_id, "Select interval:", keyboard)
-    
-    def list_timers_handler(self, chat_id: int):
-        self.cursor.execute('SELECT id, interval_value, interval_unit, next_run, total_runs, max_runs FROM timers WHERE is_active = 1')
-        timers = self.cursor.fetchall()
-        
-        if not timers:
-            self.send_message(chat_id, "No active timers")
-            return
-        
-        text = "⏲️ Active Timers:\n\n"
-        for t in timers:
-            timer_id, val, unit, next_run, runs, max_runs = t
-            next_time = datetime.fromisoformat(next_run)
-            remaining = next_time - datetime.now()
-            minutes = remaining.seconds // 60
-            text += f"#{timer_id}: Every {val} {unit}\nNext: {minutes}m\nRuns: {runs}/{max_runs or '∞'}\n\n"
-        
-        self.send_message(chat_id, text)
-    
-    def pause_timer_selection(self, chat_id: int):
-        self.cursor.execute('SELECT id, interval_value, interval_unit FROM timers WHERE is_active = 1')
-        timers = self.cursor.fetchall()
-        
-        if not timers:
-            self.send_message(chat_id, "No active timers")
-            return
-        
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": f"Timer #{t[0]} - Every {t[1]} {t[2]}", "callback_data": f"pause_timer_{t[0]}"}]
-                for t in timers
-            ]
-        }
-        self.send_message(chat_id, "Select timer to pause:", keyboard)
-    
-    def delete_timer_selection(self, chat_id: int):
-        self.cursor.execute('SELECT id, interval_value, interval_unit FROM timers')
-        timers = self.cursor.fetchall()
-        
-        if not timers:
-            self.send_message(chat_id, "No timers")
-            return
-        
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": f"❌ Timer #{t[0]} - Every {t[1]} {t[2]}", "callback_data": f"delete_timer_{t[0]}"}]
-                for t in timers
-            ]
-        }
-        self.send_message(chat_id, "Select timer to delete:", keyboard)
-    
-    # ============ MAIN MENU ============
-    
-    def show_main_menu(self, chat_id: int):
-        """Show main menu"""
-        default_ch = self.channel_manager.get_default_channel() or 'Not set'
-        self.cursor.execute('SELECT COUNT(*) FROM timers WHERE is_active = 1')
-        active_timers = self.cursor.fetchone()[0]
-        
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": "📤 Post Message", "callback_data": "forward_prompt"}],
-                [{"text": "⏲️ Auto-Timers", "callback_data": "timer_menu"}],
-                [{"text": "🔧 Manage Channels", "callback_data": "channel_menu"}],
-                [{"text": "🗑️ Delete Posts", "callback_data": "delete_posts_menu"}],
-                [{"text": "📊 Statistics", "callback_data": "stats_main"}],
-                [{"text": "❓ Help", "callback_data": "help_main"}]
-            ]
-        }
-        
-        text = f"""
-🤖 <b>Ad Bot with Auto-Pin & Auto-Delete</b>
-
-📡 Default: {default_ch}
-⏲️ Active Timers: {active_timers}
-
-<b>Features:</b>
-• Forward messages to channels
-• Auto-pin with custom duration
-• Auto-delete old posts
-• Repeating timers
-• Bulk delete options
-        """
+        text = f"🔧 Channel Management\n\nTotal Channels: {len(channels)}"
         self.send_message(chat_id, text, keyboard)
     
-    def show_stats(self, chat_id: int):
-        """Show statistics"""
-        today = datetime.now().date().isoformat()
-        self.cursor.execute('SELECT ads_posted, ads_received, messages_deleted FROM stats WHERE date = ?', (today,))
-        today_stats = self.cursor.fetchone()
-        
-        channels = self.channel_manager.get_all_channels(only_active=False)
-        self.cursor.execute('SELECT COUNT(*) FROM posted_messages WHERE is_deleted = 0')
-        active_posts = self.cursor.fetchone()[0]
-        
-        text = f"""
-📊 <b>Statistics</b>
-
-<b>Today:</b>
-📥 Received: {today_stats[1] if today_stats else 0}
-📤 Posted: {today_stats[0] if today_stats else 0}
-🗑️ Deleted: {today_stats[2] if today_stats else 0}
-
-<b>Overall:</b>
-📢 Channels: {len(channels)}
-📝 Active Posts: {active_posts}
-        """
-        self.send_message(chat_id, text)
-    
     def show_help(self, chat_id: int):
-        """Show help"""
-        text = """
-📚 <b>Help Guide</b>
+        help_text = """
+📚 Bot Commands:
 
-<b>Quick Start:</b>
-1. Add channel: /channels
-2. Forward any message to me
-3. Choose post option
+/start - Show main menu
+/channels - Manage channels
+/help - Show this help
 
-<b>Post Options:</b>
-• Post Now - Direct forward
-• Post & Pin - Pin for 1h/1d
-• Post & Delete - Auto-delete
-• Pin & Delete - Both
-
-<b>Timer Options:</b>
-• Create repeating posts
-• Can pin/delete automatically
-
-<b>Delete Options:</b>
-• Single post by ID
-• By channel
-• All pinned posts
-• Expired posts
-• Delete everything
+How to use:
+1. Add your channel using /channels
+2. Forward any message to this bot
+3. Choose "Post Now" or "Post & Pin"
+4. Done!
         """
-        self.send_message(chat_id, text)
+        self.send_message(chat_id, help_text)
     
-    # ============ MESSAGE HANDLERS ============
-    
-    def send_message(self, chat_id: int, text: str, keyboard: Dict = None):
-        """Send message"""
-        url = f"{self.base_url}/sendMessage"
-        payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
-        if keyboard:
-            payload["reply_markup"] = keyboard
+    def show_stats(self, chat_id: int):
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        cursor = conn.cursor()
+        cursor.execute('SELECT SUM(ads_posted), SUM(ads_received) FROM stats')
+        total_stats = cursor.fetchone()
+        conn.close()
         
-        try:
-            requests.post(url, json=payload, timeout=10)
-        except Exception as e:
-            logging.error(f"Send error: {e}")
-    
-    def answer_callback(self, callback_id: str, text: str = None):
-        """Answer callback"""
-        url = f"{self.base_url}/answerCallbackQuery"
-        payload = {"callback_query_id": callback_id}
-        if text:
-            payload["text"] = text
-        try:
-            requests.post(url, json=payload, timeout=10)
-        except Exception as e:
-            pass
+        text = f"📊 Statistics\n\nTotal Forwarded: {total_stats[0] or 0}\nTotal Received: {total_stats[1] or 0}"
+        self.send_message(chat_id, text)
     
     def handle_text_input(self, chat_id: int, text: str, user_id: int):
-        """Handle text input"""
         if user_id != self.admin_id:
             return
         
-        if chat_id in self.pending_requests:
-            req = self.pending_requests[chat_id]
+        if chat_id in self.pending_requests and self.pending_requests[chat_id].get('action') == 'add_channel':
+            parts = text.split(',', 1)
+            channel_id = parts[0].strip()
+            name = parts[1].strip() if len(parts) > 1 else channel_id
             
-            if req.get('action') == 'add_channel':
-                parts = text.split(',', 1)
-                channel_id = parts[0].strip()
-                name = parts[1].strip() if len(parts) > 1 else channel_id
-                self.channel_manager.add_channel(channel_id, name)
-                self.send_message(chat_id, f"✅ Added {name}")
-                self.pending_requests.pop(chat_id)
-                self.show_channel_menu(chat_id)
-                return
+            if self.channel_manager.add_channel(channel_id, name):
+                self.send_message(chat_id, f"✅ Channel '{name}' added!")
+            else:
+                self.send_message(chat_id, f"❌ Failed to add channel")
             
-            elif req.get('action') == 'confirm_delete_all' and text == 'CONFIRM':
-                self.execute_delete_all(chat_id)
-                self.pending_requests.pop(chat_id)
-                return
+            self.pending_requests.pop(chat_id, None)
+            self.show_channel_menu(chat_id)
+            return
         
         if text.startswith('/'):
-            cmd = text.lower()
-            if cmd == '/start':
+            command = text.split()[0].lower()
+            if command == '/start':
                 self.show_main_menu(chat_id)
-            elif cmd == '/channels':
+            elif command == '/channels':
                 self.show_channel_menu(chat_id)
-            elif cmd == '/stats':
+            elif command == '/stats':
                 self.show_stats(chat_id)
-            elif cmd == '/help':
+            elif command == '/help':
                 self.show_help(chat_id)
     
-    # ============ CALLBACK HANDLER ============
-    
     def handle_callback(self, callback_data: str, chat_id: int, message_id: int, user_id: int, callback_id: str = None):
-        """Handle callback queries"""
         if user_id != self.admin_id:
             if callback_id:
-                self.answer_callback(callback_id, "Unauthorized!")
+                self.answer_callback(callback_id, "Unauthorized!", True)
             return
         
-        # Forward options
         if callback_data == "forward_prompt":
-            self.send_message(chat_id, "Forward a message to me!")
-        
+            self.send_message(chat_id, "📤 Forward any message to me!")
         elif callback_data == "forward_now":
-            self.execute_forward(chat_id, pin=False, pin_duration=0, delete_after=0)
-        
-        elif callback_data == "forward_pin_3600":
-            self.execute_forward(chat_id, pin=True, pin_duration=3600, delete_after=0)
-        
-        elif callback_data == "forward_pin_86400":
-            self.execute_forward(chat_id, pin=True, pin_duration=86400, delete_after=0)
-        
-        elif callback_data == "forward_delete_86400":
-            self.execute_forward(chat_id, pin=False, pin_duration=0, delete_after=86400)
-        
-        elif callback_data == "forward_pin_delete":
-            self.execute_forward(chat_id, pin=True, pin_duration=3600, delete_after=86400)
-        
-        elif callback_data == "forward_timer":
-            self.show_timer_interval_menu(chat_id)
-            self.pending_requests[chat_id] = self.pending_requests.get(chat_id, {})
-            self.pending_requests[chat_id]['awaiting_timer'] = True
-        
-        # Timer intervals
-        elif callback_data.startswith("timer_int_"):
-            parts = callback_data.replace("timer_int_", "").split("_")
-            val = int(parts[0])
-            unit = parts[1]
-            if self.pending_requests.get(chat_id, {}).get('awaiting_timer'):
-                self.create_timer(chat_id, val, unit, pin=False)
-        
-        # Timer management
-        elif callback_data == "timer_menu":
-            self.show_timer_menu(chat_id)
-        elif callback_data == "timer_create":
-            self.show_timer_interval_menu(chat_id)
-        elif callback_data == "timer_list":
-            self.list_timers_handler(chat_id)
-        elif callback_data == "timer_pause":
-            self.pause_timer_selection(chat_id)
-        elif callback_data == "timer_delete":
-            self.delete_timer_selection(chat_id)
-        elif callback_data.startswith("pause_timer_"):
-            tid = int(callback_data.replace("pause_timer_", ""))
-            self.cursor.execute('UPDATE timers SET is_active = 0 WHERE id = ?', (tid,))
-            self.conn.commit()
-            self.send_message(chat_id, f"✅ Timer #{tid} paused")
-        elif callback_data.startswith("delete_timer_"):
-            tid = int(callback_data.replace("delete_timer_", ""))
-            self.cursor.execute('DELETE FROM timers WHERE id = ?', (tid,))
-            self.conn.commit()
-            self.send_message(chat_id, f"✅ Timer #{tid} deleted")
-        
-        # Channel management
+            self.execute_forward_enhanced(chat_id, forward_all=True, pin=False)
+        elif callback_data == "forward_pin":
+            self.execute_forward_enhanced(chat_id, forward_all=True, pin=True, pin_duration=3600)
         elif callback_data == "channel_menu":
             self.show_channel_menu(chat_id)
         elif callback_data == "ch_add":
-            self.add_channel_handler(chat_id)
+            self.send_message(chat_id, "Send channel ID: @username or -1001234567890")
+            self.pending_requests[chat_id] = {'action': 'add_channel'}
         elif callback_data == "ch_list":
-            self.list_channels_handler(chat_id)
-        elif callback_data == "ch_default":
-            self.set_default_channel_handler(chat_id)
-        elif callback_data == "ch_toggle":
-            self.toggle_channel_handler(chat_id)
-        elif callback_data == "ch_remove":
-            self.remove_channel_handler(chat_id)
-        elif callback_data.startswith("set_default_"):
-            ch_id = callback_data.replace("set_default_", "")
-            self.channel_manager.set_default_channel(ch_id)
-            self.send_message(chat_id, f"✅ Default: {ch_id}")
-        elif callback_data.startswith("toggle_"):
-            ch_id = callback_data.replace("toggle_", "")
-            ch_list = self.channel_manager.get_all_channels(only_active=False)
-            for ch in ch_list:
-                if ch['channel_id'] == ch_id:
-                    self.channel_manager.toggle_channel(ch_id, not ch['is_active'])
-                    self.send_message(chat_id, f"✅ Toggled {ch['name']}")
-                    break
-        elif callback_data.startswith("remove_"):
-            ch_id = callback_data.replace("remove_", "")
-            if self.channel_manager.remove_channel(ch_id):
-                self.send_message(chat_id, f"✅ Removed channel")
-        
-        # Delete posts
-        elif callback_data == "delete_posts_menu":
-            self.show_delete_posts_menu(chat_id)
-        elif callback_data == "delete_single_post":
-            self.list_all_posts(chat_id)
-        elif callback_data == "delete_by_channel":
-            self.show_delete_by_channel(chat_id)
-        elif callback_data == "delete_pinned_posts":
-            self.show_delete_pinned_posts(chat_id)
-        elif callback_data == "delete_expired_posts":
-            self.show_delete_expired_posts(chat_id)
-        elif callback_data == "delete_all_posts_confirm":
-            self.show_delete_all_confirm(chat_id)
-        elif callback_data == "list_all_posts":
-            self.list_all_posts(chat_id)
-        elif callback_data.startswith("list_posts_page_"):
-            page = int(callback_data.replace("list_posts_page_", ""))
-            self.list_all_posts(chat_id, page)
-        elif callback_data.startswith("delete_channel_"):
-            ch_id = callback_data.replace("delete_channel_", "")
-            self.confirm_delete_channel(chat_id, ch_id)
-        elif callback_data.startswith("confirm_del_channel_"):
-            ch_id = callback_data.replace("confirm_del_channel_", "")
-            self.execute_delete_channel(chat_id, ch_id)
-        elif callback_data == "confirm_delete_pinned":
-            self.execute_delete_pinned(chat_id)
-        elif callback_data.startswith("delete_expired_"):
-            days = int(callback_data.replace("delete_expired_", ""))
-            self.execute_delete_expired(chat_id, days)
-        elif callback_data == "confirm_delete_all":
-            self.execute_delete_all(chat_id)
-        
-        # Stats and help
-        elif callback_data == "stats_main":
-            self.show_stats(chat_id)
-        elif callback_data == "help_main":
-            self.show_help(chat_id)
+            channels = self.channel_manager.get_all_channels()
+            if channels:
+                text = "📋 Your Channels:\n\n" + "\n".join([f"• {ch['name']} - {'✅' if ch['is_active'] else '❌'}" for ch in channels])
+            else:
+                text = "No channels added yet."
+            self.send_message(chat_id, text)
         elif callback_data == "back_to_main":
             self.show_main_menu(chat_id)
+        elif callback_data == "help_main":
+            self.show_help(chat_id)
         elif callback_data == "cancel":
             self.pending_requests.pop(chat_id, None)
-            self.send_message(chat_id, "Cancelled")
+            self.send_message(chat_id, "❌ Cancelled")
         
         if callback_id:
             self.answer_callback(callback_id)
     
-    # ============ MAIN LOOP ============
+    def process_update(self, update: Dict):
+        """Process a single update (for webhook mode)"""
+        if 'message' in update:
+            msg = update['message']
+            chat_id = msg['chat']['id']
+            user_id = msg.get('from', {}).get('id')
+            
+            if 'text' in msg and user_id == self.admin_id:
+                self.handle_text_input(chat_id, msg['text'], user_id)
+            elif 'forward_date' in msg or 'forward_from' in msg or 'forward_from_chat' in msg:
+                self.handle_forwarded_message(msg, chat_id, user_id)
+        
+        elif 'callback_query' in update:
+            callback = update['callback_query']
+            callback_id = callback['id']
+            chat_id = callback['message']['chat']['id']
+            message_id = callback['message']['message_id']
+            user_id = callback['from']['id']
+            data = callback['data']
+            self.handle_callback(data, chat_id, message_id, user_id, callback_id)
     
-    def run(self):
-        """Main bot loop"""
-        logging.info("🤖 BOT STARTED!")
+    def run_polling(self):
+        """Run bot in polling mode"""
+        logging.info("Starting bot in POLLING mode...")
+        
+        # Delete any existing webhook
+        self.delete_webhook()
+        
+        # Start background services
         self.timer_manager.start_timer_processor()
+        self.schedule_manager.start_scheduler()
         
         last_update_id = 0
+        
         while self.running:
             try:
                 url = f"{self.base_url}/getUpdates"
                 params = {"offset": last_update_id + 1, "timeout": 30}
                 response = requests.get(url, params=params, timeout=35)
-                data = response.json()
                 
-                if not data.get('ok'):
-                    time.sleep(5)
-                    continue
-                
-                for update in data.get('result', []):
-                    last_update_id = update['update_id']
-                    
-                    if 'message' in update:
-                        msg = update['message']
-                        chat_id = msg['chat']['id']
-                        user_id = msg.get('from', {}).get('id')
-                        
-                        if 'forward_date' in msg or 'forward_from' in msg:
-                            self.handle_forwarded_message(msg, chat_id, user_id)
-                        elif 'text' in msg:
-                            self.handle_text_input(chat_id, msg['text'], user_id)
-                    
-                    elif 'callback_query' in update:
-                        cb = update['callback_query']
-                        self.handle_callback(
-                            cb['data'],
-                            cb['message']['chat']['id'],
-                            cb['message']['message_id'],
-                            cb['from']['id'],
-                            cb['id']
-                        )
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('ok'):
+                        for update in data.get('result', []):
+                            last_update_id = update['update_id']
+                            self.process_update(update)
                 
                 time.sleep(1)
                 
             except Exception as e:
-                logging.error(f"Main loop error: {e}")
+                logging.error(f"Polling error: {e}")
                 time.sleep(5)
     
-    def stop(self):
-        self.running = False
-        self.timer_manager.running = False
-        self.conn.close()
-        logging.info("Bot stopped")
+    def run_webhook(self, port: int):
+        """Run bot in webhook mode"""
+        logging.info(f"Starting bot in WEBHOOK mode on port {port}...")
+        
+        # Start background services
+        self.timer_manager.start_timer_processor()
+        self.schedule_manager.start_scheduler()
+        
+        # Get Render URL
+        render_url = os.environ.get('RENDER_EXTERNAL_URL')
+        if render_url:
+            webhook_url = f"{render_url}/webhook"
+            self.set_webhook(webhook_url)
+            logging.info(f"Webhook set to: {webhook_url}")
+        
+        # Run Flask app
+        app.run(host='0.0.0.0', port=port)
 
-# ============ RUN ============
+# ============ FLASK WEBHOOK ENDPOINT ============
+
+# Global bot instance (will be set after creation)
+bot_instance = None
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Handle incoming webhook updates"""
+    if bot_instance:
+        update = request.json
+        bot_instance.process_update(update)
+    return jsonify({"status": "ok"})
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check endpoint for Render"""
+    return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()})
+
+@app.route('/')
+def index():
+    """Root endpoint"""
+    return jsonify({"message": "Ad Bot is running!", "status": "active"})
+
+# ============ MAIN ENTRY POINT ============
+
 if __name__ == "__main__":
-    BOT_TOKEN = "8471906303:AAGhn4WDzPbe-uERvYtVZoFgD5dNk2e2sLY"
-    ADMIN_ID = 7049142115
+    # Get configuration from environment variables
+    BOT_TOKEN = os.environ.get('BOT_TOKEN', "8348531965:AAHA_l_1C_9Hxc2gyakfP29w51If3a8zA28")
+    ADMIN_ID = int(os.environ.get('ADMIN_ID', 7049142115))
+    PORT = int(os.environ.get('PORT', 8080))
     
-    bot = ForwardAdBot(BOT_TOKEN, ADMIN_ID)
+    # Create bot instance
+    bot_instance = ForwardAdBot(BOT_TOKEN, ADMIN_ID)
     
-    try:
-        bot.run()
-    except KeyboardInterrupt:
-        bot.stop()
-        print("\n✅ Bot stopped")
+    # Check if running on Render
+    if 'RENDER' in os.environ:
+        # Use webhook mode on Render
+        bot_instance.run_webhook(PORT)
+    else:
+        # Use polling mode locally
+        try:
+            bot_instance.run_polling()
+        except KeyboardInterrupt:
+            bot_instance.running = False
+            logging.info("Bot stopped")
