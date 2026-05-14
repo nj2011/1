@@ -41,7 +41,7 @@ import aiohttp
 
 init(autoreset=True)
 
-TOKEN = os.environ.get("BOT_TOKEN", "8769611149:AAF4Q2F9ELyrKPpW4I5pCHjR1akZnserfvo")
+TOKEN = os.environ.get("BOT_TOKEN", "8329461842:AAHl-fr_L_lAEe2-CNp7QG3G68J2RI01vIU")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "7049142115"))
 KEY_PREFIX = "ᴋʜᴀᴛᴇʟʏɴᴘʀᴇᴍɪᴜᴍᴋᴇʏ-"
 
