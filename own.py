@@ -41,7 +41,7 @@ import aiohttp
 
 init(autoreset=True)
 
-TOKEN = os.environ.get("BOT_TOKEN", "8329461842:AAFQD2E5EnvmKASJDVNiguwIrq_Cs86EmQ0")
+TOKEN = os.environ.get("BOT_TOKEN", "8769611149:AAF4Q2F9ELyrKPpW4I5pCHjR1akZnserfvo")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "7049142115"))
 KEY_PREFIX = "ᴋʜᴀᴛᴇʟʏɴᴘʀᴇᴍɪᴜᴍᴋᴇʏ-"
 
@@ -1064,7 +1064,7 @@ if __name__ == "__main__":
 '''
         return cookie_content
 
-# ========== URL & DUPLICATE REMOVER CLASS ==========
+# ========== URL & DUPLICATE REMOVER CLASS (WITH ALL OPTIONS) ==========
 class URLDuplicateRemover:
     def __init__(self):
         self.processed = 0
@@ -1079,26 +1079,103 @@ class URLDuplicateRemover:
 """
         return banner
     
-    def loading_animation(self):
-        for _ in range(100):
-            time.sleep(0.01)
+    def remove_urls(self, line: str) -> str:
+        """Only remove URLs, keep everything else including | and TG links"""
+        line = line.strip()
+        if not line:
+            return None
+        
+        # Remove URLs (http://, https://, www., domains)
+        line = re.sub(r'https?://[^\s]+', '', line)
+        line = re.sub(r'http://[^\s]+', '', line)
+        line = re.sub(r'www\.[^\s]+', '', line)
+        
+        # Clean up extra spaces
+        line = re.sub(r'\s+', ' ', line)
+        line = line.strip()
+        
+        # Remove trailing colons/pipes
+        line = re.sub(r'^[:|]+', '', line)
+        line = re.sub(r'[:|]+$', '', line)
+        
+        return line if line else None
     
-    def remove_url_and_keep_user_pass(self, line, remove_urls=True):
-        if not remove_urls:
-            return line.strip()
-        match = re.search(r'([^:]+:[^:]+)$', line.strip())
-        if match:
-            return match.group(1)
+    def remove_tg_links(self, line: str) -> str:
+        """Only remove Telegram links, keep everything else including |"""
+        line = line.strip()
+        if not line:
+            return None
+        
+        # Remove Telegram link patterns (with or without pipe)
+        line = re.sub(r'\s*\|\s*(https?://t\.me/\S+)', '', line)
+        line = re.sub(r'\s*(https?://t\.me/\S+)', '', line)
+        
+        # Clean up any extra spaces
+        line = re.sub(r'\s+', ' ', line)
+        line = line.strip()
+        
+        return line if line else None
+    
+    def process_line_full(self, line: str) -> str:
+        """Full processing: 3-step process"""
+        line = line.strip()
+        if not line:
+            return None
+        
+        # STEP 1: Remove | tg link
+        credentials_part = re.sub(r'\s*\|\s*(https?://t\.me/\S+)$', '', line)
+        
+        # STEP 2: After |tg link removed, fix remaining | replace with :
+        credentials_part = credentials_part.replace('|', ':')
+        
+        # STEP 3: Remove URL
+        credentials_part = re.sub(r'^https?://', '', credentials_part)
+        credentials_part = re.sub(r'^http://', '', credentials_part)
+        credentials_part = re.sub(r'^www\.', '', credentials_part)
+        credentials_part = re.sub(r'^[a-zA-Z0-9\-\.]+\.com[:/]', '', credentials_part)
+        credentials_part = re.sub(r'^[a-zA-Z0-9\-\.]+\.[a-z]{2,}[:/]', '', credentials_part)
+        credentials_part = re.sub(r'^[a-zA-Z0-9\-\./]+/', '', credentials_part)
+        
+        # Clean up multiple colons
+        credentials_part = re.sub(r':+', ':', credentials_part)
+        
+        # Remove leading/trailing colons and pipes
+        credentials_part = re.sub(r'^[:|]+', '', credentials_part)
+        credentials_part = re.sub(r'[:|]+$', '', credentials_part)
+        
+        # Split by colon to get username and password
+        parts = credentials_part.split(':')
+        parts = [p.strip() for p in parts if p.strip()]
+        
+        if len(parts) >= 2:
+            # Take last two parts as username:password
+            username = parts[-2]
+            password = parts[-1]
+            
+            # Final cleanup
+            username = re.sub(r'^https?://', '', username)
+            username = re.sub(r'^http://', '', username)
+            username = re.sub(r'^www\.', '', username)
+            
+            if username and password:
+                return f"{username}:{password}"
+        
         return None
     
-    def process_file(self, input_file, output_file, remove_duplicates=False):
+    def process_file(self, input_file, output_file, mode="full", remove_duplicates=False):
+        """
+        mode can be:
+        - "full": 3-step full processing (remove TG link → fix | to : → remove URL)
+        - "remove_tg_only": Only remove Telegram links, keep everything else
+        - "remove_url_only": Only remove URLs, keep everything else
+        """
         self.processed = 0
         self.saved = 0
+        tg_removed = 0
+        pipe_fixed = 0
+        url_removed = 0
         
         try:
-            # Count total lines
-            total_lines = sum(1 for _ in open(input_file, 'r', encoding='utf-8', errors='ignore'))
-            
             unique_creds = set()
             
             with open(input_file, 'r', encoding='utf-8', errors='ignore') as infile, \
@@ -1106,7 +1183,28 @@ class URLDuplicateRemover:
                 
                 for line in infile:
                     self.processed += 1
-                    result = self.remove_url_and_keep_user_pass(line, not remove_duplicates)
+                    original = line.strip()
+                    
+                    if not original:
+                        continue
+                    
+                    if mode == "remove_tg":
+                        result = self.remove_tg_links(original)
+                        if 't.me' in original:
+                            tg_removed += 1
+                    elif mode == "remove_url":
+                        result = self.remove_urls(original)
+                        if 'http://' in original or 'https://' in original or 'www.' in original:
+                            url_removed += 1
+                    else:  # full mode
+                        if 't.me' in original:
+                            tg_removed += 1
+                        if '|' in original:
+                            pipe_fixed += 1
+                        if 'http://' in original or 'https://' in original or 'www.' in original:
+                            url_removed += 1
+                        result = self.process_line_full(original)
+                    
                     if result:
                         if remove_duplicates and result not in unique_creds:
                             unique_creds.add(result)
@@ -1115,13 +1213,12 @@ class URLDuplicateRemover:
                         elif not remove_duplicates:
                             outfile.write(result + '\n')
                             self.saved += 1
-                            
-            return True, self.processed, self.saved
             
-        except FileNotFoundError:
-            return False, 0, 0
+            return True, self.processed, self.saved, tg_removed, pipe_fixed, url_removed
+            
         except Exception as e:
-            return False, 0, 0
+            logging.error(f"Process error: {e}")
+            return False, self.processed, self.saved, 0, 0, 0
 
 # ========== ENCRYPTION FUNCTIONS ==========
 def anti_debug_code():
@@ -1708,12 +1805,16 @@ def get_database_stats():
     
     return stats, total_lines
 
+# Add a log message to see when deletion happens
 async def delete_generated_file(file_path):
     try:
-        await asyncio.sleep(300)  # 5 minutes
+        logging.info(f"Auto-delete scheduled for: {file_path}")  # Add this
+        await asyncio.sleep(300)
         if os.path.exists(file_path):
             os.remove(file_path)
-            logging.info(f"Deleted generated file: {file_path}")
+            logging.info(f"✅ Deleted generated file: {file_path}")
+        else:
+            logging.warning(f"File not found for deletion: {file_path}")
     except Exception as e:
         logging.error(f"Error deleting file {file_path}: {e}")
 
@@ -1761,7 +1862,7 @@ async def start(update: Update, context: CallbackContext, edit_message_id: Optio
             [InlineKeyboardButton("🗑️ 𝙳𝙴𝙻𝙴𝚃𝙴 𝚂𝙸𝙽𝙶𝙻𝙴 𝙺𝙴𝚈", callback_data="admin_delete_single_key")],
             [InlineKeyboardButton("🛠️ 𝙼𝙰𝙸𝙽𝚃𝙴𝙽𝙰𝙽𝙲𝙴 (𝙾𝙽/𝙾𝙵𝙵)", callback_data="show_maintenance_options")],
             [InlineKeyboardButton("👥 𝙼𝙰𝙽𝙰𝙶𝙴 𝚁𝙾𝙻𝙴𝚂", callback_data="admin_manage_roles")],
-            [InlineKeyboardButton("💬 𝙵𝙴𝙴𝙳𝙱𝙰𝙲𝙺 𝙷𝙴𝚁𝙴", callback_data="prompt_feedback")]
+            [InlineKeyboardButton("💬 𝙵𝙴𝙴𝙳𝙱𝙰𝙲𝙺", callback_data="prompt_feedback")]
         ]
         welcome_msg = (
             f"👑 **𝚆𝚎𝚕𝚌𝚘𝚖𝚎, {user.first_name}! 𝚈𝚘𝚞'𝚛𝚎 𝚝𝚑𝚎 𝙱𝚘𝚜𝚜!**\n\n"
@@ -1779,51 +1880,50 @@ async def start(update: Update, context: CallbackContext, edit_message_id: Optio
             "• **🛠️ 𝚄𝚁𝙻 & 𝙳𝚞𝚙𝚕𝚒𝚌𝚊𝚝𝚎 𝚁𝚎𝚖𝚘𝚟𝚎𝚛**: 𝚁𝚎𝚖𝚘𝚟𝚎 𝚄𝚁𝙻𝚜 𝚊𝚗𝚍 𝚍𝚞𝚙𝚕𝚒𝚌𝚊𝚝𝚎𝚜 𝚏𝚛𝚘𝚖 𝚌𝚛𝚎𝚍𝚎𝚗𝚝𝚒𝚊𝚕 𝚏𝚒𝚕𝚎𝚜.\n"
             "• **🛡️ 𝙳𝚊𝚝𝚊𝙳𝚘𝚖𝚎 𝙶𝚎𝚗𝚎𝚛𝚊𝚝𝚘𝚛**: 𝙶𝚎𝚗𝚎𝚛𝚊𝚝𝚎 𝚏𝚛𝚎𝚜𝚑 𝙳𝚊𝚝𝚊𝙳𝚘𝚖𝚎 𝚌𝚘𝚘𝚔𝚒𝚎𝚜 𝚏𝚘𝚛 𝚋𝚢𝚙𝚊𝚜𝚜𝚒𝚗𝚐 𝚊𝚗𝚝𝚒-𝚋𝚘𝚝 𝚙𝚛𝚘𝚝𝚎𝚌𝚝𝚒𝚘𝚗.\n"
             "• **💣 𝚂𝙼𝚂 𝚊𝚗𝚍 𝙲𝚊𝚕𝚕 𝙱𝚘𝚖𝚋𝚎𝚛**: 𝙰𝚍𝚟𝚊𝚗𝚌𝚎𝚍 𝚖𝚞𝚕𝚝𝚒-𝚜𝚎𝚛𝚟𝚒𝚌𝚎 𝚂𝙼𝚂 𝚊𝚗𝚍 𝚌𝚊𝚕𝚕 𝚋𝚘𝚖𝚋𝚒𝚗𝚐 𝚝𝚘𝚘𝚕.\n"
-            "• **🚀 𝚂𝚘𝚌𝚒𝚊𝚕 𝙼𝚎𝚍𝚒𝚊 𝙱𝚘𝚘𝚜𝚝𝚎𝚛𝚛**: 𝙱𝚘𝚘𝚜𝚝 𝚃𝚒𝚔𝚃𝚘𝚔, 𝚃𝚎𝚕𝚎𝚐𝚛𝚊𝚖, 𝙵𝚊𝚌𝚎𝚋𝚘𝚘𝚔, 𝙸𝚗𝚜𝚝𝚊𝚐𝚛𝚊𝚖, 𝚃𝚠𝚒𝚝𝚝𝚎𝚛, 𝚈𝚘𝚞𝚃𝚞𝚋𝚎\n"
-            "• **💬 𝙵𝚎𝚎𝚍𝚋𝚊𝚌𝚔**: 𝚂𝚎𝚗𝚍 𝚢𝚘𝚞𝚛 𝚝𝚑𝚘𝚞𝚐𝚑𝚝𝚜 𝚍𝚒𝚛𝚎𝚌𝚝𝚕𝚢 𝚝𝚘 𝚝𝚑𝚎 𝚍𝚎𝚟𝚎𝚕𝚘𝚙𝚎𝚛.\n\n"
+            "• **🚀 𝚂𝚘𝚌𝚒𝚊𝚕 𝙼𝚎𝚍𝚒𝚊 𝙱𝚘𝚘𝚜𝚝𝚎𝚛**: 𝙱𝚘𝚘𝚜𝚝 𝚃𝚒𝚔𝚃𝚘𝚔, 𝚃𝚎𝚕𝚎𝚐𝚛𝚊𝚖, 𝙵𝚊𝚌𝚎𝚋𝚘𝚘𝚔, 𝙸𝚗𝚜𝚝𝚊𝚐𝚛𝚊𝚖, 𝚃𝚠𝚒𝚝𝚝𝚎𝚛, 𝚈𝚘𝚞𝚃𝚞𝚋𝚎\n"
+            "• **💬 𝙵𝙴𝙴𝙳𝙱𝙰𝙲𝙺**: 𝚂𝚎𝚗𝚍 𝚢𝚘𝚞𝚛 𝚝𝚑𝚘𝚞𝚐𝚑𝚝𝚜 𝚍𝚒𝚛𝚎𝚌𝚝𝚕𝚢 𝚝𝚘 𝚝𝚑𝚎 𝚍𝚎𝚟𝚎𝚕𝚘𝚙𝚎𝚛.\n\n"
             "🚀 *𝙺𝚎𝚢 𝙵𝚎𝚊𝚝𝚞𝚛𝚎𝚜*: 𝙰𝚞𝚝𝚘-𝙳𝚎𝚕𝚎𝚝𝚎 𝚏𝚞𝚗𝚌𝚝𝚒𝚘𝚗𝚊𝚕𝚒𝚝𝚢 & 𝚁𝚎𝚊𝚕-𝚝𝚒𝚖𝚎 𝚂𝚝𝚊𝚝𝚒𝚜𝚝𝚒𝚌𝚜."
         )
     elif is_at_least_role(user_id, "reseller"):
-         inline_keyboard_layout = [
+        inline_keyboard_layout = [
             [InlineKeyboardButton("📂 𝙶𝙴𝙽𝙴𝚁𝙰𝚃𝙴 𝙵𝙸𝙻𝙴𝚂", callback_data="show_generate_menu"),
              InlineKeyboardButton("📊 𝙼𝚈 𝚂𝚃𝙰𝚃𝙸𝚂𝚃𝙸𝙲𝚂", callback_data="show_stats")],
             [InlineKeyboardButton("⭐ 𝚄𝚂𝙴 𝙰𝙲𝙲𝙴𝚂𝚂 𝙺𝙴𝚈", callback_data="prompt_key"),
-             InlineKeyboardButton("⚙️ 𝙿𝚈𝚃𝙷𝙾𝙽 𝙴𝙽𝙲𝚁𝚈𝙿𝚃𝙾𝚁", callback_data="start_encryption")],
+             InlineKeyboardButton("🔐 𝙿𝚈𝚃𝙷𝙾𝙽 𝙴𝙽𝙲𝚁𝚈𝙿𝚃𝙾𝚁", callback_data="start_encryption")],
             [InlineKeyboardButton("🛠️ 𝚄𝚁𝙻 𝙰𝙽𝙳 𝙳𝚄𝙿𝙻𝙸𝙲𝙰𝚃𝙴 𝚁𝙴𝙼𝙾𝚅𝙴𝚁", callback_data="url_duplicate_remover")],
             [InlineKeyboardButton("🛡️ 𝙳𝙰𝚃𝙰𝙳𝙾𝙼𝙴 𝙶𝙴𝙽𝙴𝚁𝙰𝚃𝙾𝚁", callback_data="datadome_menu")],
             [InlineKeyboardButton("💣 𝚂𝙼𝚂 𝙰𝙽𝙳 𝙲𝙰𝙻𝙻 𝙱𝙾𝙼𝙱𝙴𝚁", callback_data="sms_bomber_menu")],
             [InlineKeyboardButton("🚀 𝚂𝙾𝙲𝙸𝙰𝙻 𝙼𝙴𝙳𝙸𝙰 𝙱𝙾𝙾𝚂𝚃𝙴𝚁", callback_data="social_media_booster_menu")],
             [InlineKeyboardButton("🔑 𝙶𝙴𝙽𝙴𝚁𝙰𝚃𝙴 𝙺𝙴𝚈", callback_data="admin_gen_key")],
-            [InlineKeyboardButton("📋 𝙼𝚈 𝚁𝙴𝙵𝙵𝙴𝚁𝙰𝙻 𝚜ᴛᴀᴛ𝚂", callback_data="reseller_stats")],
+            [InlineKeyboardButton("📋 𝙼𝚈 𝚁𝙴𝙵𝙵𝙴𝚁𝙰𝙻 𝚂𝚃𝙰𝚃𝚂", callback_data="reseller_stats")],
             [InlineKeyboardButton("ℹ️ 𝙷𝙴𝙻𝙿 𝙰𝙽𝙳 𝙸𝙽𝙵𝙾", callback_data="show_help")],
-            [InlineKeyboardButton("💬 𝙵𝙴𝙴𝙳𝙱𝙰𝙲𝙺 𝙷𝙴𝚁𝙴", callback_data="prompt_feedback")]
+            [InlineKeyboardButton("💬 𝙵𝙴𝙴𝙳𝙱𝙰𝙲𝙺", callback_data="prompt_feedback")]
         ]
-         access_status = "✅ Active" if has_access(user_id) else "❌ No Access"
-         welcome_msg = (
-            f"👋 **𝙶𝚛𝚎𝚎𝚝𝚒𝚗𝚐𝚜, {user.first_name}!𝚆𝚎𝚕𝚌𝚘𝚖𝚎𝚎 𝚝𝚘 {BOT_DISPLAY_NAME}!**\n\n"
+        access_status = "✅ Active" if has_access(user_id) else "❌ No Access"
+        welcome_msg = (
+            f"👋 **𝚆𝚎𝚕𝚌𝚘𝚖𝚎, {user.first_name}!**\n\n"
             f"🔐 *𝚈𝚘𝚞𝚛 𝙰𝚌𝚌𝚎𝚜𝚜 𝚂𝚝𝚊𝚝𝚞𝚜*: **{access_status}**\n"
-            f"🌟 *𝚈𝚘𝚞𝚛 Role*: **𝚁𝚎𝚜𝚎𝚕𝚕𝚎𝚛**\n\n"
-            "✨ *𝚈𝚘𝚞𝚛 𝙰𝚟𝚊𝚒𝚕𝚊𝚋𝚕𝚎 𝙲𝚘𝚖𝚖𝚊𝚗𝚍𝚜:*\n"
+            f"🌟 *𝚈𝚘𝚞𝚛 𝚁𝚘𝚕𝚎*: **𝚁𝚎𝚜𝚎𝚕𝚕𝚎𝚛**\n\n"
+            "✨ *𝙰𝚟𝚊𝚒𝚕𝚊𝚋𝚕𝚎 𝙲𝚘𝚖𝚖𝚊𝚗𝚍𝚜:*\n"
             "• **📂 𝙶𝙴𝙽𝙴𝚁𝙰𝚃𝙴 𝙵𝙸𝙻𝙴𝚂**: 𝙰𝚌𝚌𝚎𝚜𝚜 𝚙𝚛𝚎𝚖𝚒𝚞𝚖 𝚍𝚊𝚝𝚊𝚋𝚊𝚜𝚎 𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚒𝚘𝚗.\n"
-            "• **✨ 𝚄𝚂𝙴 𝙰𝙲𝙲𝙴𝚂𝚂 𝙺𝙴𝚈**: 𝙰𝚌𝚝𝚒𝚟𝚊𝚝𝚎 𝚗𝚎𝚠 𝚙𝚛𝚎𝚖𝚒𝚞𝚖 𝚔𝚎𝚢𝚜.\n"
+            "• **✨ 𝚄𝚂𝙴 𝙰𝙲𝙲𝙴𝚂𝚂 𝙺𝙴𝚈**: 𝙰𝚌𝚝𝚒𝚟𝚊𝚝𝚎 𝚢𝚘𝚞𝚛 𝚙𝚛𝚎𝚖𝚒𝚞𝚖 𝚔𝚎𝚢.\n"
             "• **📊 𝙼𝚈 𝚂𝚃𝙰𝚃𝙸𝚂𝚃𝙸𝙲𝚂**: 𝚅𝚒𝚎𝚠 𝚢𝚘𝚞𝚛 𝚙𝚎𝚛𝚜𝚘𝚗𝚊𝚕 𝚞𝚜𝚊𝚐𝚎 𝚜𝚝𝚊𝚝𝚜.\n"
-            "• **🔑 𝙶𝙴𝙽𝙴𝚁𝙰𝚃𝙴 𝙺𝙴𝚈**: 𝙲𝚛𝚎𝚊𝚝𝚎 𝚗𝚎𝚠 𝚊𝚌𝚌𝚎𝚜𝚜 𝚔𝚎𝚢𝚜 𝚏𝚘𝚛 𝚢𝚘𝚞𝚛 𝚌𝚞𝚜𝚝𝚘𝚖𝚎𝚛𝚜.\n"
-            "• **🔐 𝙿𝚈𝚃𝙷𝙾𝙽 𝙴𝙽𝙲𝚁𝚈𝙿𝚃𝙾𝚁**: 𝚂𝚎𝚌𝚞𝚛𝚎 𝚢𝚘𝚞𝚛 𝙿𝚢𝚝𝚑𝚘𝚗 𝚜𝚌𝚛𝚒𝚙𝚝𝚜 𝚠𝚒𝚝𝚑 𝚙𝚘𝚠𝚎𝚛𝚏𝚞𝚕 𝚎𝚗𝚌𝚛𝚢𝚙𝚝𝚒𝚘𝚗!\n"
-            "• **🛠️ 𝚄𝚁𝙻 𝙰𝙽𝙳 𝙳𝚄𝙿𝙻𝙸𝙲𝙰𝚃𝙴 𝚁𝙴𝙼𝙾𝚅𝙴𝚁**: Remove URLs and duplicates from credential files.\n"
-            "• **🛡️ 𝙳𝙰𝚃𝙰𝙳𝙾𝙼𝙴 𝙶𝙴𝙽𝙴𝚁𝙰𝚃𝙾𝚁**: 𝙶𝚎𝚗𝚎𝚛𝚊𝚝𝚎 fresh DataDome cookies for bypassing anti-bot protection.\n"
-            "• **💣 𝚂𝙼𝚂 𝙰𝙽𝙳 𝙲𝙰𝙻𝙻 𝙱𝙾𝙼𝙱𝙴𝚁**: 𝙰𝚍𝚟𝚊𝚗𝚌𝚎𝚍 𝚖𝚞𝚕𝚝𝚒-𝚜𝚎𝚛𝚟𝚒𝚌𝚎 𝚂𝙼𝚂 𝚊𝚗𝚍 𝚌𝚊𝚕𝚕 𝚋𝚘𝚖𝚋𝚒𝚗𝚐 𝚝𝚘𝚘𝚕.\n"
-            "• **🚀 𝚂𝙾𝙲𝙸𝙰𝙻 𝙼𝙴𝙳𝙸𝙰 𝙱𝙾𝙾𝚂𝚃𝙴𝚁**: 𝙱𝚘𝚘𝚜𝚝 TikTok, 𝚃𝚎𝚕𝚎𝚐𝚛𝚊𝚖, 𝙵𝚊𝚌𝚎𝚋𝚘𝚘𝚔, 𝙸𝚗𝚜𝚝𝚊𝚐𝚛𝚊𝚖, 𝚃𝚠𝚒𝚝𝚝𝚎𝚛, 𝚈𝚘𝚞𝚃𝚞𝚋𝚎\n"
-            "• **📋 𝙼𝚈 𝚁𝙴𝙵𝙵𝙴𝚁𝙰𝙻 𝚂𝚃𝙰𝚃𝚂**: 𝚃𝚛𝚊𝚌𝚔 𝚢𝚘𝚞𝚛 𝚔𝚎𝚢 𝚊𝚌𝚝𝚒𝚟𝚊𝚝𝚒𝚘𝚗𝚜. (𝙲𝚘𝚖𝚒𝚗𝚐 𝚂𝚘𝚘𝚗!)\n"
-            "• **💬 𝙵𝙴𝙴𝙳𝙱𝙰𝙲𝙺**: Share 𝚢𝚘𝚞𝚛 𝚒𝚍𝚎𝚊𝚜 𝚘𝚛 𝚛𝚎𝚙𝚘𝚛𝚝 𝚒𝚜𝚜𝚞𝚎𝚜.\n"
-            "• **ℹ️ 𝙷𝙴𝙻𝙿 𝙰𝙽𝙳 𝙸𝙽𝙵𝙾**: 𝙵𝚒𝚗𝚍 𝚊𝚗𝚜𝚠𝚎𝚛𝚜 𝚝𝚘 𝚢𝚘𝚞𝚛 𝚚𝚞𝚎𝚜𝚝𝚒𝚘𝚗𝚜.\n\n"
-            "For 𝚊𝚗𝚢 𝚊𝚜𝚜𝚒𝚜𝚝𝚊𝚗𝚌𝚎, 𝚙𝚕𝚎𝚊𝚜𝚎 𝚌𝚘𝚗𝚝𝚊𝚌𝚝: @Khatelynnnnnn"
+            "• **🔑 𝙶𝙴𝙽𝙴𝚁𝙰𝚃𝙴 𝙺𝙴𝚈**: 𝙲𝚛𝚎𝚊𝚝𝚎 𝚗𝚎𝚠 𝚊𝚌𝚌𝚎𝚜𝚜 𝚔𝚎𝚢𝚜 𝚏𝚘𝚛 𝚌𝚞𝚜𝚝𝚘𝚖𝚎𝚛𝚜.\n"
+            "• **🔐 𝙿𝚈𝚃𝙷𝙾𝙽 𝙴𝙽𝙲𝚁𝚈𝙿𝚃𝙾𝚁**: 𝚂𝚎𝚌𝚞𝚛𝚎 𝚢𝚘𝚞𝚛 𝙿𝚢𝚝𝚑𝚘𝚗 𝚜𝚌𝚛𝚒𝚙𝚝𝚜!\n"
+            "• **🛠️ 𝚄𝚁𝙻 & 𝙳𝚞𝚙𝚕𝚒𝚌𝚊𝚝𝚎 𝚁𝚎𝚖𝚘𝚟𝚎𝚛**: 𝙲𝚕𝚎𝚊𝚗 𝚌𝚛𝚎𝚍𝚎𝚗𝚝𝚒𝚊𝚕 𝚏𝚒𝚕𝚎𝚜.\n"
+            "• **🛡️ 𝙳𝚊𝚝𝚊𝙳𝚘𝚖𝚎 𝙶𝚎𝚗𝚎𝚛𝚊𝚝𝚘𝚛**: 𝙱𝚢𝚙𝚊𝚜𝚜 𝚊𝚗𝚝𝚒-𝚋𝚘𝚝 𝚙𝚛𝚘𝚝𝚎𝚌𝚝𝚒𝚘𝚗.\n"
+            "• **💣 𝚂𝙼𝚂 & 𝙲𝚊𝚕𝚕 𝙱𝚘𝚖𝚋𝚎𝚛**: 𝙰𝚍𝚟𝚊𝚗𝚌𝚎𝚍 𝚖𝚞𝚕𝚝𝚒-𝚜𝚎𝚛𝚟𝚒𝚌𝚎 𝚊𝚝𝚝𝚊𝚌𝚔𝚜.\n"
+            "• **🚀 𝚂𝚘𝚌𝚒𝚊𝚕 𝙼𝚎𝚍𝚒𝚊 𝙱𝚘𝚘𝚜𝚝𝚎𝚛**: 𝙱𝚘𝚘𝚜𝚝 𝚊𝚕𝚕 𝚙𝚕𝚊𝚝𝚏𝚘𝚛𝚖𝚜.\n"
+            "• **📋 𝙼𝚈 𝚁𝙴𝙵𝙵𝙴𝚁𝙰𝙻 𝚂𝚃𝙰𝚃𝚂**: 𝚃𝚛𝚊𝚌𝚔 𝚢𝚘𝚞𝚛 𝚔𝚎𝚢 𝚊𝚌𝚝𝚒𝚟𝚊𝚝𝚒𝚘𝚗𝚜.\n"
+            "• **💬 𝙵𝙴𝙴𝙳𝙱𝙰𝙲𝙺**: 𝚂𝚑𝚊𝚛𝚎 𝚢𝚘𝚞𝚛 𝚝𝚑𝚘𝚞𝚐𝚑𝚝𝚜.\n"
+            "• **ℹ️ 𝙷𝙴𝙻𝙿 𝙰𝙽𝙳 𝙸𝙽𝙵𝙾**: 𝙵𝚒𝚗𝚍 𝚊𝚗𝚜𝚠𝚎𝚛𝚜.\n\n"
+            "📞 **𝙲𝚘𝚗𝚝𝚊𝚌𝚝**: @Khatelynnnnnn"
         )
-
     else:
         if MAINTENANCE_MODE:
             await current_message.reply_text(
-                "🛠️ **𝚃𝚑𝚎 𝚋𝚘𝚝 𝚒𝚜 𝚞𝚗𝚍𝚎𝚛 𝚖𝚊𝚒𝚗𝚝𝚎𝚗𝚊𝚗𝚌𝚎**\n\n"
-                "ᴛʜᴇ ʙᴏᴛ ɪs ᴄᴜʀʀᴇɴᴛʟʏ ᴜɴᴅᴇʀɢᴏɪɴɢ ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ. ᴡᴇ'ʟʟ ʙᴇ ʙᴀᴄᴋ ᴏɴʟɪɴᴇ sʜᴏʀᴛʟʏ!",
+                "🛠️ **𝚃𝚑𝚎 𝙱𝚘𝚝 𝙸𝚜 𝚄𝚗𝚍𝚎𝚛 𝙼𝚊𝚒𝚗𝚝𝚎𝚗𝚊𝚗𝚌𝚎**\n\n"
+                "ᴛʜᴇ ʙᴏᴛ ɪs ᴄᴜʀʀᴇɴᴛʟʏ ᴜɴᴅᴇʀɢᴏɪɴɢ ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ. ᴡᴇ'ʟʟ ʙᴇ ʙᴀᴄᴋ sʜᴏʀᴛʟʏ!",
                 parse_mode="Markdown"
             )
             return
@@ -1832,32 +1932,32 @@ async def start(update: Update, context: CallbackContext, edit_message_id: Optio
             [InlineKeyboardButton("📂 𝙶𝙴𝙽𝙴𝚁𝙰𝚃𝙴 𝙵𝙸𝙻𝙴𝚂", callback_data="show_generate_menu"),
              InlineKeyboardButton("📊 𝙼𝚈 𝚂𝚃𝙰𝚃𝙸𝚂𝚃𝙸𝙲𝚂", callback_data="show_stats")],
             [InlineKeyboardButton("⭐ 𝚄𝚂𝙴 𝙰𝙲𝙲𝙴𝚂𝚂 𝙺𝙴𝚈", callback_data="prompt_key"),
-             InlineKeyboardButton("⚙️ 𝙿𝚈𝚃𝙷𝙾𝙽 𝙴𝙽𝙲𝚁𝚈𝙿𝚃𝙾𝚁", callback_data="start_encryption")],
+             InlineKeyboardButton("🔐 𝙿𝚈𝚃𝙷𝙾𝙽 𝙴𝙽𝙲𝚁𝚈𝙿𝚃𝙾𝚁", callback_data="start_encryption")],
             [InlineKeyboardButton("🛠️ 𝚄𝚁𝙻 𝙰𝙽𝙳 𝙳𝚄𝙿𝙻𝙸𝙲𝙰𝚃𝙴 𝚁𝙴𝙼𝙾𝚅𝙴𝚁", callback_data="url_duplicate_remover")],
             [InlineKeyboardButton("🛡️ 𝙳𝙰𝚃𝙰𝙳𝙾𝙼𝙴 𝙶𝙴𝙽𝙴𝚁𝙰𝚃𝙾𝚁", callback_data="datadome_menu")],
             [InlineKeyboardButton("💣 𝚂𝙼𝚂 𝙰𝙽𝙳 𝙲𝙰𝙻𝙻 𝙱𝙾𝙼𝙱𝙴𝚁", callback_data="sms_bomber_menu")],
             [InlineKeyboardButton("🚀 𝚂𝙾𝙲𝙸𝙰𝙻 𝙼𝙴𝙳𝙸𝙰 𝙱𝙾𝙾𝚂𝚃𝙴𝚁", callback_data="social_media_booster_menu")],
             [InlineKeyboardButton("ℹ️ 𝙷𝙴𝙻𝙿 𝙰𝙽𝙳 𝙸𝙽𝙵𝙾", callback_data="show_help")],
-            [InlineKeyboardButton("💬 𝙵𝙴𝙴𝙳𝙱𝙰𝙲𝙺 𝙷𝙴𝚁𝙴", callback_data="prompt_feedback")]
+            [InlineKeyboardButton("💬 𝙵𝙴𝙴𝙳𝙱𝙰𝙲𝙺", callback_data="prompt_feedback")]
         ]
         
         access_status = "✅ Active" if has_access(user_id) else "❌ No Access"
         welcome_msg = (
-            f"👋 **𝙷𝚎𝚕𝚕𝚘, {user.first_name}! 𝚠𝚎𝚕𝚌𝚘𝚖𝚎 𝚝𝚘 {BOT_DISPLAY_NAME}!**\n\n"
+            f"👋 **𝙷𝚎𝚕𝚕𝚘, {user.first_name}! 𝚆𝚎𝚕𝚌𝚘𝚖𝚎 𝚝𝚘 {BOT_DISPLAY_NAME}!**\n\n"
             f"🔐 *𝚈𝚘𝚞𝚛 𝙰𝚌𝚌𝚎𝚜𝚜 𝚂𝚝𝚊𝚝𝚞𝚜*: **{access_status}**\n\n"
-            "✨ *𝚈𝚘𝚞𝚛 𝙰𝚟𝚊𝚒𝚕𝚊𝚋𝚕𝚎 𝙲𝚘𝚖𝚖𝚊𝚗𝚍𝚜:*\n"
-            "• **📂 𝙶𝚎𝚗𝚎𝚛𝚊𝚝𝚎 𝙵𝚒𝚕𝚎𝚜**: 𝙰𝚌𝚌𝚎𝚜𝚜 𝚙𝚘𝚠𝚎𝚛𝚏𝚞𝚕 database generation.\n"
-            "• **🔍 𝚂𝚎𝚊𝚛𝚌𝚑 𝙳𝚊𝚝𝚊𝚋𝚊𝚜𝚎**: 𝙵𝚒𝚗𝚍 𝚜𝚙𝚎𝚌𝚒𝚏𝚒𝚌 𝚍𝚊𝚝𝚊 𝚠𝚒𝚝𝚑𝚒𝚗 𝚘𝚞𝚛 𝚍𝚊𝚝𝚊𝚋𝚊𝚜𝚎𝚜. (𝙲𝚘𝚖𝚒𝚗𝚐 𝚂𝚘𝚘𝚗!)\n"
-            "• **♨️ 𝚄𝚂𝙴 𝙰𝙲𝙲𝙴𝚂𝚂 𝙺𝙴𝚈**: 𝙰𝚌𝚝𝚒𝚟𝚊𝚝𝚎 𝚢𝚘𝚞𝚛 𝚙𝚛𝚎𝚖𝚒𝚞𝚖 𝚔𝚎𝚢.\n"
-            "• **📊 𝙼𝚈 𝚂𝚃𝙰𝚃𝙸𝚂𝚃𝙸𝙲𝚂**: 𝚃𝚛𝚊𝚌𝚔 𝚢𝚘𝚞𝚛 𝚞𝚜𝚊𝚐𝚎 𝚊𝚗𝚍 𝚙𝚛𝚘𝚐𝚛𝚎𝚜𝚜.\n"
-            "• **🔐 𝙿𝚈𝚃𝙷𝙾𝙽 𝙴𝙽𝙲𝚁𝚈𝙿𝚃𝙾𝚁**: 𝚂𝚎𝚌𝚞𝚛𝚎 𝚢𝚘𝚞𝚛 𝙿𝚢𝚝𝚑𝚘𝚗 𝚜𝚌𝚛𝚒𝚙𝚝𝚜 𝚠𝚒𝚝𝚑 𝚙𝚘𝚠𝚎𝚛𝚏𝚞𝚕 𝚎𝚗𝚌𝚛𝚢𝚙𝚝𝚒𝚘𝚗!\n"
-            "• **🛠️ 𝚄𝚁𝙻 𝙰𝙽𝙳 𝙳𝚄𝙿𝙻𝙸𝙲𝙰𝚃𝙴 𝚁𝙴𝙼𝙾𝚅𝙴𝚁**: 𝚁𝚎𝚖𝚘𝚟𝚎 𝚄𝚁𝙻𝚜 𝚊𝚗𝚍 𝚍𝚞𝚙𝚕𝚒𝚌𝚊𝚝𝚎𝚜 𝚏𝚛𝚘𝚖 𝚌𝚛𝚎𝚍𝚎𝚗𝚝𝚒𝚊𝚕 𝚏𝚒𝚕𝚎𝚜.\n"
-            "• **🛡️ 𝙳𝙰𝚃𝙰𝙳𝙾𝙼𝙴 𝙶𝙴𝙽𝙴𝚁𝙰𝚃𝙾𝚁**: 𝙶𝚎𝚗𝚎𝚛𝚊𝚝𝚎 𝚏𝚛𝚎𝚜𝚑 𝙳𝚊𝚝𝚊𝙳𝚘𝚖𝚎 𝚌𝚘𝚘𝚔𝚒𝚎𝚜 𝚏𝚘𝚛 𝚋𝚢𝚙𝚊𝚜𝚜𝚒𝚗𝚐 𝚊𝚗𝚝𝚒-𝚋𝚘𝚝 𝚙𝚛𝚘𝚝𝚎𝚌𝚝𝚒𝚘𝚗.\n"
-            "• **💣 𝚂𝙼𝚂 𝙰𝙽𝙳 𝙲𝙰𝙻𝙻 𝙱𝙾𝙼𝙱𝙴𝚁**: 𝙰𝚍𝚟𝚊𝚗𝚌𝚎𝚍 𝚖𝚞𝚕𝚝𝚒-𝚜𝚎𝚛𝚟𝚒𝚌𝚎 𝚂𝙼𝚂 𝚊𝚗𝚍 𝚌𝚊𝚕𝚕 𝚋𝚘𝚖𝚋𝚒𝚗𝚐 𝚝𝚘𝚘𝚕.\n"
-            "• **🚀 𝚂𝙾𝙲𝙸𝙰𝙻 𝙼𝙴𝙳𝙸𝙰 𝙱𝙾𝙾𝚂𝚃𝙴𝚁**: 𝙱𝚘𝚘𝚜𝚝 𝚃𝚒𝚔𝚃𝚘𝚔, 𝚃𝚎𝚕𝚎𝚐𝚛𝚊𝚖, 𝙵𝚊𝚌𝚎𝚋𝚘𝚘𝚔, 𝙸𝚗𝚜𝚝𝚊𝚐𝚛𝚊𝚖, 𝚃𝚠𝚒𝚝𝚝𝚎𝚛, 𝚈𝚘𝚞𝚃𝚞𝚋𝚎\n"
-            "• **💬 𝙵𝙴𝙴𝙳𝙱𝙰𝙲𝙺**: Send your 𝚜𝚞𝚐𝚐𝚎𝚜𝚝𝚒𝚘𝚗𝚜 𝚘𝚛 𝚛𝚎𝚙𝚘𝚛𝚝 𝚙𝚛𝚘𝚋𝚕𝚎𝚖𝚜.\n"
-            "• ** 𝙷𝙴𝙻𝙿 𝙰𝙽𝙳 𝙸𝙽𝙵𝙾**: 𝙶𝚎𝚝 𝚊𝚜𝚜𝚒𝚜𝚝𝚊𝚗𝚌𝚎 𝚊𝚗𝚍 𝚕𝚎𝚊𝚛𝚗 𝚖𝚘𝚛𝚎 𝚊𝚋𝚘𝚞𝚝 𝚝𝚑𝚎 𝚋𝚘𝚝.\n\n"
-            "𝙽𝚎𝚎𝚍 𝚙𝚛𝚎𝚖𝚒𝚞𝚖 𝚊𝚌𝚌𝚎𝚜? 𝙳𝙼 𝚝𝚑𝚎 𝚋𝚘𝚝 𝚘𝚠𝚗𝚎𝚛: @Khatelynnnnnn"
+            "✨ *𝙰𝚟𝚊𝚒𝚕𝚊𝚋𝚕𝚎 𝙲𝚘𝚖𝚖𝚊𝚗𝚍𝚜:*\n"
+            "• **📂 𝙶𝙴𝙽𝙴𝚁𝙰𝚃𝙴 𝙵𝙸𝙻𝙴𝚂**: 𝙰𝚌𝚌𝚎𝚜𝚜 𝚙𝚘𝚠𝚎𝚛𝚏𝚞𝚕 𝚍𝚊𝚝𝚊𝚋𝚊𝚜𝚎 𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚒𝚘𝚗.\n"
+            "• **⭐ 𝚄𝚂𝙴 𝙰𝙲𝙲𝙴𝚂𝚂 𝙺𝙴𝚈**: 𝙰𝚌𝚝𝚒𝚟𝚊𝚝𝚎 𝚙𝚛𝚎𝚖𝚒𝚞𝚖 𝚊𝚌𝚌𝚎𝚜𝚜.\n"
+            "• **📊 𝙼𝚈 𝚂𝚃𝙰𝚃𝙸𝚂𝚃𝙸𝙲𝚂**: 𝚃𝚛𝚊𝚌𝚔 𝚢𝚘𝚞𝚛 𝚞𝚜𝚊𝚐𝚎.\n"
+            "• **🔐 𝙿𝚈𝚃𝙷𝙾𝙽 𝙴𝙽𝙲𝚁𝚈𝙿𝚃𝙾𝚁**: 𝚂𝚎𝚌𝚞𝚛𝚎 𝚢𝚘𝚞𝚛 𝚜𝚌𝚛𝚒𝚙𝚝𝚜!\n"
+            "• **🛠️ 𝚄𝚁𝙻 & 𝙳𝚞𝚙𝚕𝚒𝚌𝚊𝚝𝚎 𝚁𝚎𝚖𝚘𝚟𝚎𝚛**: 𝙲𝚕𝚎𝚊𝚗 𝚌𝚛𝚎𝚍𝚎𝚗𝚝𝚒𝚊𝚕 𝚏𝚒𝚕𝚎𝚜.\n"
+            "• **🛡️ 𝙳𝚊𝚝𝚊𝙳𝚘𝚖𝚎 𝙶𝚎𝚗𝚎𝚛𝚊𝚝𝚘𝚛**: 𝙱𝚢𝚙𝚊𝚜𝚜 𝚊𝚗𝚝𝚒-𝚋𝚘𝚝.\n"
+            "• **💣 𝚂𝙼𝚂 & 𝙲𝚊𝚕𝚕 𝙱𝚘𝚖𝚋𝚎𝚛**: 𝙼𝚞𝚕𝚝𝚒-𝚜𝚎𝚛𝚟𝚒𝚌𝚎 𝚊𝚝𝚝𝚊𝚌𝚔𝚜.\n"
+            "• **🚀 𝚂𝚘𝚌𝚒𝚊𝚕 𝙼𝚎𝚍𝚒𝚊 𝙱𝚘𝚘𝚜𝚝𝚎𝚛**: 𝙱𝚘𝚘𝚜𝚝 𝚊𝚕𝚕 𝚙𝚕𝚊𝚝𝚏𝚘𝚛𝚖𝚜.\n"
+            "• **💬 𝙵𝙴𝙴𝙳𝙱𝙰𝙲𝙺**: 𝚂𝚎𝚗𝚍 𝚜𝚞𝚐𝚐𝚎𝚜𝚝𝚒𝚘𝚗𝚜.\n"
+            "• **ℹ️ 𝙷𝙴𝙻𝙿 𝙰𝙽𝙳 𝙸𝙽𝙵𝙾**: 𝙶𝚎𝚝 𝚊𝚜𝚜𝚒𝚜𝚝𝚊𝚗𝚌𝚎.\n\n"
+            "📞 **𝙽𝚎𝚎𝚍 𝚙𝚛𝚎𝚖𝚒𝚞𝚖 𝚊𝚌𝚌𝚎𝚜𝚜?**\n"
+            "𝙳𝙼 @Khatelynnnnnn"
         )
     
     inline_reply_markup = InlineKeyboardMarkup(inline_keyboard_layout)
@@ -1892,7 +1992,7 @@ async def start(update: Update, context: CallbackContext, edit_message_id: Optio
         )
 
     logging.info(f"User {user_id} ({user.first_name}) started the bot with role: {USER_ROLES.get(user_id, 'user')}")
-
+    
 # ========== ADMIN FUNCTIONS ==========
 async def admin_panel(update: Update, context: CallbackContext):
     current_message: Message = update.message if update.message else update.callback_query.message if update.callback_query else None
@@ -1904,9 +2004,9 @@ async def admin_panel(update: Update, context: CallbackContext):
     if not is_at_least_role(user_id, "owner"):
         if update.callback_query:
             await update.callback_query.answer("❌ Access Denied!", show_alert=True)
-            await current_message.edit_text("❌ **Access Denied!** This panel is for the owner only.", parse_mode="Markdown")
+            await current_message.edit_text("❌ **𝙰𝙲𝙲𝙴𝚂𝚂 𝙳𝙴𝙽𝙸𝙴𝙳!** 𝚃𝙷𝙸𝚂 𝙿𝙰𝙽𝙴𝙻 𝙸𝚂 𝙵𝙾𝚁 𝚃𝙷𝙴 𝙾𝚆𝙽𝙴𝚁 𝙾𝙽𝙻𝚈.", parse_mode="Markdown")
         else:
-            await current_message.reply_text("❌ **Access Denied!** This panel is for the owner only.", parse_mode="Markdown")
+            await current_message.reply_text("❌ **𝙰𝙲𝙲𝙴𝚂𝚂 𝙳𝙴𝙽𝙸𝙴𝙳!** 𝚃𝙷𝙸𝚂 𝙿𝙰𝙽𝙴𝙻 𝙸𝚂 𝙵𝙾𝚁 𝚃𝙷𝙴 𝙾𝚆𝙽𝙴𝚁 𝙾𝙽𝙻𝚈.", parse_mode="Markdown")
         return
     
     db_stats, total_lines = get_database_stats()
@@ -1915,32 +2015,32 @@ async def admin_panel(update: Update, context: CallbackContext):
     available_keys = len(ACCESS_KEYS)
     
     admin_text = (
-        f"👑 **𝙰𝚍𝚖𝚒𝚗 𝙲𝚘𝚗𝚝𝚛𝚘𝚕 𝚂𝚢𝚜𝚝𝚎𝚖**\n\n"
-        f"📊 *𝚂𝚢𝚜𝚝𝚎𝚖 𝙾𝚟𝚎𝚛𝚟𝚒𝚎𝚠:*\n"
-        f"• 𝚃𝚘𝚝𝚊𝚕 𝚄𝚜𝚎𝚛𝚜: **{total_users}**\n"
-        f"• 𝙰𝚌𝚝𝚒𝚟𝚎 𝚄𝚜𝚎𝚛𝚜: **{active_users}**\n"
-        f"• 𝙰𝚟𝚊𝚒𝚕𝚊𝚋𝚕𝚎 𝙺𝚎𝚢𝚜: **{available_keys}**\n"
-        f"• 𝚃𝚘𝚝𝚊𝚕 𝙳𝚊𝚝𝚊𝚋𝚊𝚜𝚎 𝙻𝚒𝚗𝚎𝚜: **{total_lines:,}**\n\n"
-        f"🛠️ *𝙼𝚊𝚒𝚗𝚝𝚎𝚗𝚊𝚗𝚌𝚎 𝙼𝚘𝚍𝚎 𝚂𝚝𝚊𝚝𝚞𝚜*: {'**✅ 𝙾𝚗**' if MAINTENANCE_MODE else '**❌ 𝙾𝚏𝚏**'}\n\n"
-        f"🗄️ *𝙳𝚊𝚝𝚊𝚋𝚊𝚜𝚎 𝙷𝚎𝚊𝚕𝚝𝚑 𝙲𝚑𝚎𝚌𝚔:*\n"
+        f"👑 **𝙰𝙳𝙼𝙸𝙽 𝙲𝙾𝙽𝚃𝚁𝙾𝙻 𝚂𝚈𝚂𝚃𝙴𝙼**\n\n"
+        f"📊 *𝚂𝚈𝚂𝚃𝙴𝙼 𝙾𝚅𝙴𝚁𝚅𝙸𝙴𝚆:*\n"
+        f"• 𝚃𝙾𝚃𝙰𝙻 𝚄𝚂𝙴𝚁𝚂: **{total_users}**\n"
+        f"• 𝙰𝙲𝚃𝙸𝚅𝙴 𝚄𝚂𝙴𝚁𝚂: **{active_users}**\n"
+        f"• 𝙰𝚅𝙰𝙸𝙻𝙰𝙱𝙻𝙴 𝙺𝙴𝚈𝚂: **{available_keys}**\n"
+        f"• 𝚃𝙾𝚃𝙰𝙻 𝙳𝙰𝚃𝙰𝙱𝙰𝚂𝙴 𝙻𝙸𝙽𝙴𝚂: **{total_lines:,}**\n\n"
+        f"🛠️ *𝙼𝙰𝙸𝙽𝚃𝙴𝙽𝙰𝙽𝙲𝙴 𝙼𝙾𝙳𝙴 𝚂𝚃𝙰𝚃𝚄𝚂*: {'**✅ 𝙾𝙽**' if MAINTENANCE_MODE else '**❌ 𝙾𝙵𝙵**'}\n\n"
+        f"🗄️ *𝙳𝙰𝚃𝙰𝙱𝙰𝚂𝙴 𝙷𝙴𝙰𝙻𝚃𝙷 𝙲𝙷𝙴𝙲𝙺:*\n"
     )
     
     for db_name, count in db_stats.items():
-        status = "🟢 HEALTHY" if count > 1000 else "🟡 MODERATE" if count > 100 else "🔴 LOW" if count > 0 else "⚫ EMPTY"
+        status = "🟢 𝙷𝙴𝙰𝙻𝚃𝙷𝚈" if count > 1000 else "🟡 𝙼𝙾𝙳𝙴𝚁𝙰𝚃𝙴" if count > 100 else "🔴 𝙻𝙾𝚆" if count > 0 else "⚫ 𝙴𝙼𝙿𝚃𝚈"
         admin_text += f"• {status}: **{db_name}** ({count:,} lines)\n"
     
     keyboard = [
-        [InlineKeyboardButton("🔑 ɢᴇɴᴇʀᴀᴛᴇ sɪɴɢʟᴇ ᴋᴇʏ", callback_data="admin_gen_key_single")],
-        [InlineKeyboardButton("🗝️ ɢᴇɴᴇʀᴀᴛᴇ ᴍᴜʟᴛɪᴘʟᴇ ᴋᴇʏs", callback_data="admin_gen_key_multi")],
-        [InlineKeyboardButton("📋 ᴜsᴇʀ ʟɪsᴛs", callback_data="admin_users"),
-         InlineKeyboardButton("🔴 ʀᴇᴠᴏᴋᴇ ᴜsᴇʀ/ᴋᴇʏ", callback_data="admin_revoke")],
-        [InlineKeyboardButton("📣 sᴇɴᴅ ᴀɴɴᴏᴜɴᴄᴇᴍᴇɴᴛ", callback_data="admin_announce"),
-         InlineKeyboardButton("💾 ʙᴀᴄᴋᴜᴘ ᴅᴀᴛᴀ", callback_data="admin_backup")],
-        [InlineKeyboardButton("🔄 ʀᴇʟᴏᴀᴅ ᴅᴀᴛᴀʙᴀsᴇs", callback_data="admin_reload"),
-         InlineKeyboardButton("🗑️ ᴅᴇʟᴇᴛᴇ sɪɴɢʟᴇ ᴋᴇʏ", callback_data="admin_delete_single_key")],
-        [InlineKeyboardButton("🛠 ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ ᴍᴏᴅᴇ ᴏᴘᴛɪᴏɴs", callback_data="show_maintenance_options")],
-        [InlineKeyboardButton("👥 ᴍᴀɴᴀɢᴇ ʀᴏʟᴇs", callback_data="admin_manage_roles")],
-        [InlineKeyboardButton("⬅️ ʙᴀᴄᴋ ᴛᴏ ᴍᴀɪɴ ᴍᴇɴᴜ", callback_data="back_to_main_menu")]
+        [InlineKeyboardButton("🔑 𝙶𝙴𝙽𝙴𝚁𝙰𝚃𝙴 𝚂𝙸𝙽𝙶𝙻𝙴 𝙺𝙴𝚈", callback_data="admin_gen_key_single")],
+        [InlineKeyboardButton("🗝️ 𝙶𝙴𝙽𝙴𝚁𝙰𝚃𝙴 𝙼𝚄𝙻𝚃𝙸𝙿𝙻𝙴 𝙺𝙴𝚈𝚂", callback_data="admin_gen_key_multi")],
+        [InlineKeyboardButton("📋 𝚄𝚂𝙴𝚁 𝙻𝙸𝚂𝚃𝚂", callback_data="admin_users"),
+         InlineKeyboardButton("🔴 𝚁𝙴𝚅𝙾𝙺𝙴 𝚄𝚂𝙴𝚁/𝙺𝙴𝚈", callback_data="admin_revoke")],
+        [InlineKeyboardButton("📣 𝚂𝙴𝙽𝙳 𝙰𝙽𝙽𝙾𝚄𝙽𝙲𝙴𝙼𝙴𝙽𝚃", callback_data="admin_announce"),
+         InlineKeyboardButton("💾 𝙱𝙰𝙲𝙺𝚄𝙿 𝙳𝙰𝚃𝙰", callback_data="admin_backup")],
+        [InlineKeyboardButton("🔄 𝚁𝙴𝙻𝙾𝙰𝙳 𝙳𝙰𝚃𝙰𝙱𝙰𝚂𝙴𝚂", callback_data="admin_reload"),
+         InlineKeyboardButton("🗑️ 𝙳𝙴𝙻𝙴𝚃𝙴 𝚂𝙸𝙽𝙶𝙻𝙴 𝙺𝙴𝚈", callback_data="admin_delete_single_key")],
+        [InlineKeyboardButton("🛠️ 𝙼𝙰𝙸𝙽𝚃𝙴𝙽𝙰𝙽𝙲𝙴 𝙼𝙾𝙳𝙴 𝙾𝙿𝚃𝙸𝙾𝙽𝚂", callback_data="show_maintenance_options")],
+        [InlineKeyboardButton("👥 𝙼𝙰𝙽𝙰𝙶𝙴 𝚁𝙾𝙻𝙴𝚂", callback_data="admin_manage_roles")],
+        [InlineKeyboardButton("⬅️ 𝙱𝙰𝙲𝙺 𝚃𝙾 𝙼𝙰𝙸𝙽 𝙼𝙴𝙽𝚄", callback_data="back_to_main_menu")]
     ]
     
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -3193,22 +3293,22 @@ async def prompt_feedback(update: Update, context: CallbackContext):
         if update.callback_query:
             await current_message.answer("🛠️ Bot is under maintenance!", show_alert=True)
             await current_message.edit_text(
-                "🛠️ **The Bot Is Maintenance**\n\n"
-                "ᴛʜᴇ ʙᴏᴛ ɪs ᴄᴜʀʀᴇɴᴛʟʏ ᴜɴᴅᴇʀɢᴏɪɴɢ ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ. ᴘʟᴇᴀsᴇ ᴛʀʏ ᴀɢᴀɪɴ ʟᴀᴛᴇʀ!",
+                "🛠️ **𝚃𝚑𝚎 𝙱𝚘𝚝 𝙸𝚜 𝙼𝚊𝚒𝚗𝚝𝚎𝚗𝚊𝚗𝚌𝚎**\n\n"
+                "𝚝𝚑𝚎 𝚋𝚘𝚝 𝚒𝚜 𝚌𝚞𝚛𝚛𝚎𝚗𝚝𝚕𝚢 𝚞𝚗𝚍𝚎𝚛𝚐𝚘𝚒𝚗𝚐 𝚖𝚊𝚒𝚗𝚝𝚎𝚗𝚊𝚗𝚌𝚎. 𝚙𝚕𝚎𝚊𝚜𝚎 𝚝𝚛𝚢 𝚊𝚐𝚊𝚒𝚗 𝚕𝚊𝚝𝚎𝚛!",
                 parse_mode="Markdown"
             )
         else:
             await current_message.reply_text(
-                "🛠️ **The Bot Is Maintenance**\n\n"
-                "ᴛʜᴇ ʙᴏᴛ ɪs ᴄᴜʀʀᴇɴᴛʟʏ ᴜɴᴅᴇʀɢᴏɪɴɢ ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ. ᴘʟᴇᴀsᴇ ᴛʀʏ ᴀɢᴀɪɴ ʟᴀᴛᴇʀ!",
+                "🛠️ **𝚃𝚑𝚎 𝙱𝚘𝚝 𝙸𝚜 𝙼𝚊𝚒𝚗𝚝𝚎𝚗𝚊𝚗𝚌𝚎**\n\n"
+                "𝚝𝚑𝚎 𝚋𝚘𝚝 𝚒𝚜 𝚌𝚞𝚛𝚛𝚎𝚗𝚝𝚕𝚢 𝚞𝚗𝚍𝚎𝚛𝚐𝚘𝚒𝚗𝚐 𝚖𝚊𝚒𝚗𝚝𝚎𝚗𝚊𝚗𝚌𝚎. 𝚙𝚕𝚎𝚊𝚜𝚎 𝚝𝚛𝚢 𝚊𝚐𝚊𝚒𝚗 𝚕𝚊𝚝𝚎𝚛!",
                 parse_mode="Markdown"
             )
         return
 
     AWAITING_FEEDBACK.add(user_id)
     message_text = (
-        "💬 **- sᴇɴᴅ ʏᴏᴜʀ ғᴇᴇᴅʙᴀᴄᴋ -** 💬\n\n"
-        "ᴘʟᴇᴀsᴇ ᴛʏᴘᴇ ʏᴏᴜʀ ғᴇᴇᴅʙᴀᴄᴋ ᴍᴇssᴀɢᴇ ʙᴇʟᴏᴡ. ʏᴏᴜ ᴄᴀɴ ᴀʟsᴏ sᴇɴᴅ ᴀ ᴘʜᴏᴛᴏ, ᴠɪᴅᴇᴏ, ᴏʀ ᴅᴏᴜᴍᴇɴᴛ ɪғ ɴᴇᴇᴅᴇᴅ.\n\n"
+        "💬 **𝙵𝙴𝙴𝙳𝙱𝙰𝙲𝙺** 💬\n\n"
+        "ᴘʟᴇᴀꜱᴇ ᴛʏᴘᴇ ʏᴏᴜʀ ꜰᴇᴇᴅʙᴀᴄᴋ ᴍᴇꜱꜱᴀɢᴇ ʙᴇʟᴏᴡ. ʏᴏᴜ ᴄᴀɴ ᴀʟꜱᴏ ꜱᴇɴᴅ ᴀ ᴘʜᴏᴛᴏ, ᴠɪᴅᴇᴏ, ᴏʀ ᴅᴏᴄᴜᴍᴇɴᴛ ɪꜰ ɴᴇᴇᴅᴇᴅ.\n\n"
         "*ᴡᴇ ᴀᴘᴘʀᴇᴄɪᴀᴛᴇ ʏᴏᴜʀ ɪɴᴘᴜᴛ!*"
     )
     keyboard = [[InlineKeyboardButton("⬅️ ᴄᴀɴᴄᴇʟ", callback_data="cancel_action")]]
@@ -3218,7 +3318,7 @@ async def prompt_feedback(update: Update, context: CallbackContext):
         await current_message.edit_text(text=message_text, reply_markup=reply_markup, parse_mode="Markdown")
     else:
         await current_message.reply_text(text=message_text, reply_markup=reply_markup, parse_mode="Markdown")
-
+        
 async def handle_feedback(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id not in AWAITING_FEEDBACK:
@@ -3705,60 +3805,89 @@ async def url_duplicate_remover_menu(update: Update, context: CallbackContext):
 
     user_id = update.effective_user.id
     if MAINTENANCE_MODE and user_id != ADMIN_ID:
-        await current_message.edit_text("🛠️ **Bot is under maintenance!**", parse_mode="Markdown")
+        await current_message.edit_text("🛠️ **ʙᴏᴛ ɪꜱ ᴜɴᴅᴇʀ ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ!**", parse_mode="Markdown")
         return
 
     if not has_access(user_id):
-        await current_message.edit_text("🔒 **Premium access required!**", parse_mode="Markdown")
+        await current_message.edit_text("🔒 **ᴘʀᴇᴍɪᴜᴍ ᴀᴄᴄᴇꜱꜱ ʀᴇǫᴜɪʀᴇᴅ!**", parse_mode="Markdown")
         return
 
     keyboard = [
-        [InlineKeyboardButton("🔗 ʀᴇᴍᴏᴠᴇ ᴜʀʟs", callback_data="remove_urls")],
-        [InlineKeyboardButton("🧹 ʀᴇᴍᴏᴠᴇ ᴅᴜᴘʟɪᴄᴀᴛᴇs", callback_data="remove_duplicates")],
-        [InlineKeyboardButton("⬅️ ʙᴀᴄᴋ ᴛᴏ ᴍᴀɪɴ ᴍᴇɴᴜ", callback_data="back_to_main_menu")]
+        [InlineKeyboardButton("🌐 𝚁𝙴𝙼𝙾𝚅𝙴 𝚄𝚁𝙻𝚂", callback_data="remove_url")],
+        [InlineKeyboardButton("🔗 𝚁𝙴𝙼𝙾𝚅𝙴 𝚃𝙶 𝙻𝙸𝙽𝙺𝚂", callback_data="remove_tg")],
+        [InlineKeyboardButton("🧹 𝚁𝙴𝙼𝙾𝚅𝙴 𝙳𝚄𝙿𝙻𝙸𝙲𝙰𝚃𝙴𝚂", callback_data="duplicate_removal")],
+        [InlineKeyboardButton("🔄 𝙵𝚄𝙻𝙻 𝙿𝚁𝙾𝙲𝙴𝚂𝚂𝙸𝙽𝙶", callback_data="full_processing")],
+        [InlineKeyboardButton("⬅️ 𝙱𝙰𝙲𝙺 𝚃𝙾 𝙼𝙰𝙸𝙽 𝙼𝙴𝙽𝚄", callback_data="back_to_main_menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     message_text = (
-        "🛠️ **ᴜʀʟ & ᴅᴜᴘʟɪᴄᴀᴛᴇ ʀᴇᴍᴏᴠᴇʀ** 🛠️\n\n"
-        "Choose an option to process your files:\n\n"
-        "• **ʀᴇᴍᴏᴠᴇ ᴜʀʟs**: Extract only username:password from lines containing URLs\n"
-        "• **ʀᴇᴍᴏᴠᴇ ᴅᴜᴘʟɪᴄᴀᴛᴇs**: Remove duplicate credentials from your file\n\n"
-        "📝 *sᴜᴘᴘᴏʀᴛ ғᴏʀᴍᴀᴛs*: Text files with credentials in format `username:password` or `url:username:password`"
+        "🛠️ **𝚄𝚁𝙻 & 𝙳𝚄𝙿𝙻𝙸𝙲𝙰𝚃𝙴 𝚁𝙴𝙼𝙾𝚅𝙴𝚁** 🛠️\n\n"
+        "ᴄʜᴏᴏꜱᴇ ᴀɴ ᴏᴘᴛɪᴏɴ:\n\n"
+        "• 🌐 **𝚁𝙴𝙼𝙾𝚅𝙴 𝚄𝚁𝙻𝚂 𝙾𝙽𝙻𝚈** - ʀᴇᴍᴏᴠᴇꜱ ᴜʀʟs.\n"
+        "• 🔗 **𝚁𝙴𝙼𝙾𝚅𝙴 𝚃𝙶 𝙻𝙸𝙽𝙺𝚂 𝙾𝙽𝙻𝚈** - ʀᴇᴍᴏᴠᴇꜱ ᴛᴇʟᴇɢʀᴀᴍ ʟɪɴᴋꜱ\n"
+        "• 🔄 **𝙵𝚄𝙻𝙻 𝙿𝚁𝙾𝙲𝙴𝚂𝚂𝙸𝙽𝙶** - ғᴜʟʟ ᴘʀᴏᴄᴇss\n"
+        "• 🧹 **𝚁𝙴𝙼𝙾𝚅𝙴 𝙳𝚄𝙿𝙻𝙸𝙲𝙰𝚃𝙴𝚂** - ʀᴇᴍᴏᴠᴇꜱ ᴅᴜᴘʟɪᴄᴀᴛᴇ ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ\n\n"
     )
 
     if update.callback_query:
         await current_message.edit_text(message_text, reply_markup=reply_markup, parse_mode="Markdown")
     else:
         await current_message.reply_text(message_text, reply_markup=reply_markup, parse_mode="Markdown")
-
+        
 async def start_url_removal(update: Update, context: CallbackContext):
     current_message: Message = update.callback_query.message
     await current_message.edit_text(
-        "🔗 **ᴜʀʟ ʀᴇᴍᴏᴠᴀʟ ᴛᴏᴏʟ**\n\n"
-        "Please upload a text file containing credentials.\n\n"
-        "📝 *ғᴏʀᴍᴀᴛ ᴇxᴀᴍᴘʟᴇs:*\n"
+        "🔗 **𝚄𝚁𝙻 𝚁𝙴𝙼𝙾𝚅𝙰𝙻 𝚃𝙾𝙾𝙻**\n\n"
+        "ᴘʟᴇᴀꜱᴇ ᴜᴘʟᴏᴀᴅ ᴀ ᴛᴇxᴛ ꜰɪʟᴇ ᴄᴏɴᴛᴀɪɴɪɴɢ ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ.\n\n"
+        "📝 ꜰᴏʀᴍᴀᴛ ᴇxᴀᴍᴘʟᴇꜱ:\n"
         "• `https://example.com:username:password`\n"
         "• `username:password`\n"
-        "• Any format with URLs and credentials\n\n"
-        "The tool will extract only the `username:password` parts.",
+        "• ᴀɴʏ ꜰᴏʀᴍᴀᴛ ᴡɪᴛʜ ᴜʀʟꜱ ᴀɴᴅ ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ\n\n"
+        "ᴛʜᴇ ᴛᴏᴏʟ ᴡɪʟʟ ᴇxᴛʀᴀᴄᴛ ᴏɴʟʏ ᴛʜᴇ `ᴜꜱᴇʀɴᴀᴍᴇ:ᴘᴀꜱꜱᴡᴏʀᴅ` ᴘᴀʀᴛꜱ.",
         parse_mode="Markdown"
     )
-    context.user_data['remover_option'] = 'remove_urls'
+    context.user_data['remover_option'] = 'url_removal'
+    AWAITING_FILE_UPLOAD.add(update.effective_user.id)
+
+async def start_tg_removal(update: Update, context: CallbackContext):
+    current_message: Message = update.callback_query.message
+    await current_message.edit_text(
+        "🔗 **𝚁𝙴𝙼𝙾𝚅𝙴 𝚃𝙴𝙻𝙴𝙶𝚁𝙰𝙼 𝙻𝙸𝙽𝙺𝚂**\n\n"
+        "ᴘʟᴇᴀꜱᴇ ᴜᴘʟᴏᴀᴅ ᴀ ᴛᴇxᴛ ꜰɪʟᴇ.\n\n"
+        "📝 ᴡʜᴀᴛ ᴛʜɪꜱ ᴅᴏᴇꜱ:\n"
+        "• ʀᴇᴍᴏᴠᴇꜱ ᴛᴇʟᴇɢʀᴀᴍ ʟɪɴᴋs\n",
+        parse_mode="Markdown"
+    )
+    context.user_data['remover_option'] = 'remove_tg_only'
+    AWAITING_FILE_UPLOAD.add(update.effective_user.id)
+
+async def start_full_processing(update: Update, context: CallbackContext):
+    current_message: Message = update.callback_query.message
+    await current_message.edit_text(
+        "🔄 **𝙵𝚄𝙻𝙻 𝙿𝚁𝙾𝙲𝙴𝚂𝚂𝙸𝙽𝙶**\n\n"
+        "ᴘʟᴇᴀꜱᴇ ᴜᴘʟᴏᴀᴅ ᴀ ᴛᴇxᴛ ꜰɪʟᴇ.\n\n"
+        "📝 ɪɴᴘᴜᴛ\n"
+        "• https://example.com/:username:password\n"
+        "📝 ᴏᴜᴛᴘᴜᴛ:\n"
+        "ᴏᴜᴛᴘᴜᴛ: `userɴᴀᴍᴇ:passᴡᴏʀᴅ`",
+        parse_mode="Markdown"
+    )
+    context.user_data['remover_option'] = 'full_processing'
     AWAITING_FILE_UPLOAD.add(update.effective_user.id)
 
 async def start_duplicate_removal(update: Update, context: CallbackContext):
     current_message: Message = update.callback_query.message
     await current_message.edit_text(
         "🧹 **ᴅᴜᴘʟɪᴄᴀᴛᴇ ʀᴇᴍᴏᴠᴀʟ ᴛᴏᴏʟ**\n\n"
-        "Please upload a text file containing credentials.\n\n"
-        "📝 *ғᴏʀᴍᴀᴛ ᴇxᴀᴍᴘʟᴇs:*\n"
+        "ᴘʟᴇᴀꜱᴇ ᴜᴘʟᴏᴀᴅ ᴀ ᴛᴇxᴛ ꜰɪʟᴇ ᴄᴏɴᴛᴀɪɴɪɴɢ ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ.\n\n"
+        "📝 ғᴏʀᴍᴀᴛ ᴇxᴀᴍᴘʟᴇꜱ:\n"
         "• `username:password`\n"
-        "• Any credentials format\n\n"
-        "The tool will remove all duplicate entries and keep only unique credentials.",
+        "• ᴀɴʏ ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ ꜰᴏʀᴍᴀᴛ\n\n"
+        "ᴛʜᴇ ᴛᴏᴏʟ ᴡɪʟʟ ʀᴇᴍᴏᴠᴇ ᴀʟʟ ᴅᴜᴘʟɪᴄᴀᴛᴇ ᴇɴᴛʀɪᴇꜱ ᴀɴᴅ ᴋᴇᴇᴘ ᴏɴʟʏ ᴜɴɪǫᴜᴇ ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ.",
         parse_mode="Markdown"
     )
-    context.user_data['remover_option'] = 'remove_duplicates'
+    context.user_data['remover_option'] = 'duplicate_removal'
     AWAITING_FILE_UPLOAD.add(update.effective_user.id)
 
 async def handle_file_processing(update: Update, context: CallbackContext):
@@ -3769,11 +3898,11 @@ async def handle_file_processing(update: Update, context: CallbackContext):
     document = update.message.document
     
     if not document.file_name.endswith('.txt'):
-        await update.message.reply_text("❌ **Please upload a .txt file!**")
+        await update.message.reply_text("❌ **ᴘʟᴇᴀꜱᴇ ᴜᴘʟᴏᴀᴅ ᴀ .ᴛxᴛ ꜰɪʟᴇ!**")
         AWAITING_FILE_UPLOAD.discard(user_id)
         return
 
-    processing_msg = await update.message.reply_text("📥 **Downloading file...**")
+    processing_msg = await update.message.reply_text("📥 **ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ ꜰɪʟᴇ...**")
 
     try:
         file = await document.get_file()
@@ -3790,41 +3919,80 @@ async def handle_file_processing(update: Update, context: CallbackContext):
         remover = URLDuplicateRemover()
         option = context.user_data.get('remover_option')
         
-        if option == 'remove_urls':
-            await processing_msg.edit_text("🔗 **ʀᴇᴍᴏᴠɪɴɢ ᴜʀʟs ᴀɴᴅ ᴇxᴛʀᴀᴄᴛɪɴɢ ᴄʀᴇᴅᴇɴᴛɪᴀʟs...**")
+        # Print banner to console only
+        print(remover.print_banner())
+        
+        # Set mode based on option
+        if option == 'remove_url':
+            await processing_msg.edit_text("🌐 **ʀᴇᴍᴏᴠɪɴɢ ᴜʀʟꜱ...**")
+            mode = "remove_url"
             remove_duplicates = False
-            process_type = "URL removal"
-        else:  # remove_duplicates
-            await processing_msg.edit_text("🧹 **ʀᴇᴍᴏᴠɪɴɢ ᴅᴜᴘʟɪᴄᴀᴛᴇs ᴄʀᴇᴅᴇɴᴛɪᴀʟs...**")
+        elif option == 'remove_tg':
+            await processing_msg.edit_text("🔗 **ʀᴇᴍᴏᴠɪɴɢ ᴛᴇʟᴇɢʀᴀᴍ ʟɪɴᴋꜱ...**")
+            mode = "remove_tg"
+            remove_duplicates = False
+        elif option == 'full_processing':
+            await processing_msg.edit_text("🔄 **ꜰᴜʟʟ ᴘʀᴏᴄᴇꜱꜱɪɴɢ...**")
+            mode = "full"
+            remove_duplicates = False
+        elif option == 'duplicate_removal':
+            await processing_msg.edit_text("🧹 **ʀᴇᴍᴏᴠɪɴɢ ᴅᴜᴘʟɪᴄᴀᴛᴇꜱ...**")
+            mode = "full"
             remove_duplicates = True
-            process_type = "duplicate removal"
+        else:
+            # Default to full processing
+            await processing_msg.edit_text("🔄 **ᴘʀᴏᴄᴇꜱꜱɪɴɢ...**")
+            mode = "full"
+            remove_duplicates = False
         
         # Create output filename
         timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        if option == 'remove_urls':
-            output_filename = f"ᴄʟᴇᴀɴ{timestamp}.txt"
-        else:
-            output_filename = f"ᴄʟᴇᴀɴ{timestamp}.txt"
-        
+        output_filename = f"cleaned_{timestamp}.txt"
         output_filepath = GENERATED_DIR / output_filename
         
         # Process the file
-        success, processed, saved = remover.process_file(input_filepath, output_filepath, remove_duplicates)
+        success, processed, saved, tg_removed, pipe_fixed, url_removed = remover.process_file(
+            str(input_filepath), str(output_filepath), mode, remove_duplicates
+        )
         
         if success and saved > 0:
+            # Build caption based on mode
+            if option == 'remove_url':
+                caption = (
+                    f"✅ **ᴜʀʟ ʀᴇᴍᴏᴠᴀʟ ᴄᴏᴍᴘʟᴇᴛᴇ!** ✅\n\n"
+                    f"📊 **ꜱᴛᴀᴛɪꜱᴛɪᴄꜱ:**\n"
+                    f"• ʟɪɴᴇꜱ ᴘʀᴏᴄᴇꜱꜱᴇᴅ: **{processed:,}**\n"
+                    f"• ʟɪɴᴇꜱ ꜱᴀᴠᴇᴅ: **{saved:,}**\n"
+                    f"• ᴜʀʟꜱ ʀᴇᴍᴏᴠᴇᴅ: **{url_removed:,}**"
+                )
+            elif option == 'remove_tg':
+                caption = (
+                    f"✅ **ᴛɢ ʟɪɴᴋ ʀᴇᴍᴏᴠᴀʟ ᴄᴏᴍᴘʟᴇᴛᴇ!** ✅\n\n"
+                    f"📊 **ꜱᴛᴀᴛɪꜱᴛɪᴄꜱ:**\n"
+                    f"• ʟɪɴᴇꜱ ᴘʀᴏᴄᴇꜱꜱᴇᴅ: **{processed:,}**\n"
+                    f"• ʟɪɴᴇꜱ ꜱᴀᴠᴇᴅ: **{saved:,}**\n"
+                    f"• ʟɪɴᴋꜱ ʀᴇᴍᴏᴠᴇᴅ: **{tg_removed:,}**"
+                )
+            elif option == 'full_processing':
+                caption = (
+                    f"✅ **ꜰᴜʟʟ ᴘʀᴏᴄᴇꜱꜱɪɴɢ ᴄᴏᴍᴘʟᴇᴛᴇ!** ✅\n\n"
+                    f"📊 **ꜱᴛᴀᴛɪꜱᴛɪᴄꜱ:**\n"
+                    f"• ʟɪɴᴇꜱ ᴘʀᴏᴄᴇꜱꜱᴇᴅ: **{processed:,}**\n"
+                    f"• ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ ꜱᴀᴠᴇᴅ: **{saved:,}**\n"
+                    f"• ʟɪɴᴋꜱ ʀᴇᴍᴏᴠᴇᴅ: **{tg_removed:,}**\n"
+                    f"• ꜰɪxᴇᴅ: **{pipe_fixed:,}**\n"
+                    f"• ᴜʀʟꜱ ʀᴇᴍᴏᴠᴇᴅ: **{url_removed:,}**"
+                )
+            else:  # duplicate_removal
+                caption = (
+                    f"✅ **ᴅᴜᴘʟɪᴄᴀᴛᴇ ʀᴇᴍᴏᴠᴀʟ ᴄᴏᴍᴘʟᴇᴛᴇ!** ✅\n\n"
+                    f"📊 **ꜱᴛᴀᴛɪꜱᴛɪᴄꜱ:**\n"
+                    f"• ʟɪɴᴇꜱ ᴘʀᴏᴄᴇꜱꜱᴇᴅ: **{processed:,}**\n"
+                    f"• ᴜɴɪǫᴜᴇ ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ ꜱᴀᴠᴇᴅ: **{saved:,}**"
+                )
+            
             # Send the processed file
             with open(output_filepath, "rb") as f:
-                caption = (
-                    f"✅ **{process_type.capitalize()} Complete!** ✅\n\n"
-                    f"📊 **Processing Statistics:**\n"
-                    f"• Processed lines: **{processed}**\n"
-                    f"• Saved credentials: **{saved}**\n"
-                    f"• Success rate: **{(saved/processed*100):.2f}%**\n\n"
-                    f"📁 **Original file:** `{document.file_name}`\n"
-                    f"🔄 **Processing type:** {process_type}\n"
-                    f"⏰ **Processed on:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                )
-                
                 await context.bot.send_document(
                     chat_id=update.message.chat_id,
                     document=f,
@@ -3834,15 +4002,19 @@ async def handle_file_processing(update: Update, context: CallbackContext):
                 )
             
             # Schedule file deletion
-            asyncio.create_task(delete_generated_file(input_filepath))
-            asyncio.create_task(delete_generated_file(output_filepath))
+            asyncio.create_task(delete_generated_file(str(input_filepath)))
+            asyncio.create_task(delete_generated_file(str(output_filepath)))
             
         else:
             await processing_msg.edit_text(
-                f"❌ **Processing Failed!**\n\n"
-                f"No valid credentials found or file processing error.\n"
-                f"• Processed lines: {processed}\n"
-                f"• Saved credentials: {saved}",
+                f"❌ **ᴘʀᴏᴄᴇꜱꜱɪɴɢ ꜰᴀɪʟᴇᴅ!** ❌\n\n"
+                f"ɴᴏ ᴠᴀʟɪᴅ ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ ꜰᴏᴜɴᴅ.\n"
+                f"ʟɪɴᴇꜱ ᴘʀᴏᴄᴇꜱꜱᴇᴅ: **{processed}**\n"
+                f"ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ ꜱᴀᴠᴇᴅ: **{saved}**\n\n"
+                f"💡 **ᴇxᴘᴇᴄᴛᴇᴅ ꜰᴏʀᴍᴀᴛ:**\n"
+                f"• `ᴜꜱᴇʀɴᴀᴍᴇ|ᴘᴀꜱꜱᴡᴏʀᴅ`\n"
+                f"• `ʜᴛᴛᴘꜱ://ꜱɪᴛᴇ.ᴄᴏᴍ|ᴜꜱᴇʀ|ᴘᴀꜱꜱ`\n"
+                f"• `ᴜꜱᴇʀ|ᴘᴀꜱꜱ | ʜᴛᴛᴘꜱ://ᴛ.ᴍᴇ/ʟɪɴᴋ`",
                 parse_mode="Markdown"
             )
             
@@ -3853,7 +4025,7 @@ async def handle_file_processing(update: Update, context: CallbackContext):
                 os.remove(output_filepath)
 
     except Exception as e:
-        await processing_msg.edit_text(f"❌ **Error processing file:** `{str(e)}`", parse_mode="Markdown")
+        await processing_msg.edit_text(f"❌ **ᴇʀʀᴏʀ:** `{str(e)}`", parse_mode="Markdown")
         logging.error(f"Error in file processing: {e}")
     
     AWAITING_FILE_UPLOAD.discard(user_id)
@@ -4717,9 +4889,13 @@ async def handle_callback_query(update: Update, context: CallbackContext):
             await cancel_encryption(update, context)
         elif data == "url_duplicate_remover":
             await url_duplicate_remover_menu(update, context)
-        elif data == "remove_urls":
+        elif data == "remove_url":
             await start_url_removal(update, context)
-        elif data == "remove_duplicates":
+        elif data == "remove_tg":
+            await start_tg_removal(update, context)
+        elif data == "full_processing":
+            await start_full_processing(update, context)
+        elif data == "duplicate_removal":
             await start_duplicate_removal(update, context)
         elif data == "datadome_menu":
             await datadome_menu(update, context)
@@ -4785,14 +4961,14 @@ async def handle_callback_query(update: Update, context: CallbackContext):
             await reseller_stats(update, context)
         else:
             await query.message.edit_text(
-                "⚠️ **𝚄𝚗𝚔𝚗𝚘𝚠𝚗 𝚋𝚞𝚝𝚝𝚘𝚗 𝚊𝚌𝚝𝚒𝚘𝚗!**\n\n𝙿𝚕𝚎𝚊𝚜𝚎 𝚝𝚛𝚢 𝚊𝚐𝚊𝚒𝚗 𝚘𝚛 𝚞𝚜𝚎 /start.",
+                "⚠️ **ᴜɴᴋɴᴏᴡɴ ʙᴜᴛᴛᴏɴ ᴀᴄᴛɪᴏɴ!**\n\nᴘʟᴇᴀꜱᴇ ᴛʀʏ ᴀɢᴀɪɴ ᴏʀ ᴜꜱᴇ /start.",
                 parse_mode="Markdown"
             )
     except Exception as e:
-        logging.error(f"𝙴𝚛𝚛𝚘𝚛 𝚒𝚗 𝚌𝚊𝚕𝚕𝚋𝚊𝚌𝚔 𝚚𝚞𝚎𝚛𝚢 𝚑𝚊𝚗𝚍𝚕𝚎𝚛 𝚏𝚘𝚛 𝚍𝚊𝚝𝚊 {data}: {e}")
+        logging.error(f"Error in callback query handler for data {data}: {e}")
         try:
             await query.message.edit_text(
-                f"❌ **𝙰𝚗 𝚎𝚛𝚛𝚘𝚛 𝚘𝚌𝚌𝚞𝚛𝚛𝚎𝚍!**\n\n`{str(e)}`\n\n𝙿𝚕𝚎𝚊𝚜𝚎 𝚝𝚛𝚢 𝚊𝚐𝚊𝚒𝚗 𝚘𝚛 𝚌𝚘𝚗𝚝𝚊𝚌𝚝 𝚜𝚞𝚙𝚙𝚘𝚛𝚝.",
+                f"❌ **ᴀɴ ᴇʀʀᴏʀ ᴏᴄᴄᴜʀʀᴇᴅ!**\n\n`{str(e)}`\n\nᴘʟᴇᴀꜱᴇ ᴛʀʏ ᴀɢᴀɪɴ ᴏʀ ᴄᴏɴᴛᴀᴄᴛ ꜱᴜᴘᴘᴏʀᴛ.",
                 parse_mode="Markdown"
             )
         except:
@@ -4877,7 +5053,7 @@ if __name__ == '__main__':
             self.wfile.write(b"OK")
     
     def run_health_server():
-        server = HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 8080))), HealthHandler)
+        server = HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 8088))), HealthHandler)
         server.serve_forever()
     
     # Run health server in background
