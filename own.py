@@ -2245,11 +2245,11 @@ async def handle_enter_key(update: Update, context: CallbackContext):
         
         if key_data.get("days") == 999999:
             expires_at = None
-            expiry_text = "**🌟 Lifetime Access**"
+            expiry_text = "🌟 Lifetime Access"
         else:
             days = key_data.get("days", 30)
             expires_at = (datetime.datetime.now() + datetime.timedelta(days=days)).timestamp()
-            expiry_text = f"**🗓️ {days} day{'s' if days != 1 else ''}**"
+            expiry_text = f"🗓️ {days} day{'s' if days != 1 else ''}"
         
         USER_ACCESS[user_id] = expires_at
         if user_id not in USER_STATS:
@@ -2260,24 +2260,25 @@ async def handle_enter_key(update: Update, context: CallbackContext):
         save_access()
 
         success_message = (
-            f"🎉 **ᴀᴄᴄᴇss ɢʀᴀɴᴛᴇᴅ! ᴡᴇʟᴄᴏᴍᴇ ᴛᴏ ᴘʀᴇᴍɪᴜᴍ!** 🎉\n\n"
-            f"✅ **sᴛᴀᴛᴜs**: ᴘʀᴇᴍɪᴜᴍ ᴀᴄᴛɪᴠᴀᴛᴇᴅ!\n"
+            "🎉 **ᴀᴄᴄᴇss ɢʀᴀɴᴛᴇᴅ! ᴡᴇʟᴄᴏᴍᴇ ᴛᴏ ᴘʀᴇᴍɪᴜᴍ!** 🎉\n\n"
+            "✅ **sᴛᴀᴛᴜs**: ᴘʀᴇᴍɪᴜᴍ ᴀᴄᴛɪᴠᴀᴛᴇᴅ!\n"
             f"⏳ **ᴠᴀʟɪᴅɪᴛʏ**: {expiry_text}\n\n"
-            f"🚀 **ᴜɴʟᴏᴄᴋᴇᴅ ғᴇᴀᴛᴜʀᴇs**:\n"
-            f"┣ 📂 **ᴅᴀᴛᴀʙᴀsᴇ ɢᴇɴᴇʀᴀᴛɪᴏɴ** (500 ᴘᴇʀ ʀᴇǫᴜᴇsᴛ)\n"
-            f"┣ 🔍 **sᴇᴀʀᴄʜ & ғɪʟᴛᴇʀ** (ᴄᴏᴍɪɴɢ sᴏᴏɴ!)\n"
-            f"┣ 📊 **ᴘᴇʀsᴏɴᴀʟ sᴛᴀᴛɪsᴛɪᴄs**\n"
-            f"┣ 🔐 **ᴘʏᴛʜᴏɴ ᴇɴᴄʀʏᴘᴛᴏʀ**\n"
-            f"┣ 🛠️ **ᴜʀʟ & ᴅᴜᴘʟɪᴄᴀᴛᴇ ʀᴇᴍᴏᴠᴇʀ**\n"
-            f"┣ 🛡️ **ᴅᴀᴛᴀᴅᴏᴍᴇ ɢᴇɴᴇʀᴀᴛᴏʀ**\n"
-            f"┣ 💣 **sᴍs & ᴄᴀʟʟ ʙᴏᴍʙᴇʀ**\n"
-            f"┣ 🚀 **sᴏᴄɪᴀʟ ᴍᴇᴅɪᴀ ʙᴏᴏsᴛᴇʀ**\n\n"
-            f"✨ **ɢᴇᴛ sᴛᴀʀᴛᴇᴅ**: ᴛᴀᴘ '📂 ɢᴇɴᴇʀᴀᴛᴇ ғɪʟᴇs' ғʀᴏᴍ ᴛʜᴇ ᴍᴀɪɴ ᴍᴇɴᴜ!"
+            "🚀 **ᴜɴʟᴏᴄᴋᴇᴅ ғᴇᴀᴛᴜʀᴇs**:\n"
+            "┣ 📂 **ᴅᴀᴛᴀʙᴀsᴇ ɢᴇɴᴇʀᴀᴛɪᴏɴ** (500 ᴘᴇʀ ʀᴇǫᴜᴇsᴛ)\n"
+            "┣ 🔍 **sᴇᴀʀᴄʜ & ғɪʟᴛᴇʀ** (ᴄᴏᴍɪɴɢ sᴏᴏɴ!)\n"
+            "┣ 📊 **ᴘᴇʀsᴏɴᴀʟ sᴛᴀᴛɪsᴛɪᴄs**\n"
+            "┣ 🔐 **ᴘʏᴛʜᴏɴ ᴇɴᴄʀʏᴘᴛᴏʀ**\n"
+            "┣ 🛠️ **ᴜʀʟ & ᴅᴜᴘʟɪᴄᴀᴛᴇ ʀᴇᴍᴏᴠᴇʀ**\n"
+            "┣ 🛡️ **ᴅᴀᴛᴀᴅᴏᴍᴇ ɢᴇɴᴇʀᴀᴛᴏʀ**\n"
+            "┣ 💣 **sᴍs & ᴄᴀʟʟ ʙᴏᴍʙᴇʀ**\n"
+            "┣ 🚀 **sᴏᴄɪᴀʟ ᴍᴇᴅɪᴀ ʙᴏᴏsᴛᴇʀ**\n\n"
+            "✨ **ɢᴇᴛ sᴛᴀʀᴛᴇᴅ**: ᴛᴀᴘ '📂 ɢᴇɴᴇʀᴀᴛᴇ ғɪʟᴇs' ғʀᴏᴍ ᴛʜᴇ ᴍᴀɪɴ ᴍᴇɴᴜ!"
         )
         keyboard = [[InlineKeyboardButton("⬅️ ʙᴀᴄᴋ ᴛᴏ ᴍᴀɪɴ ᴍᴇɴᴜ", callback_data="back_to_main_menu")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(success_message, reply_markup=reply_markup, parse_mode="Markdown")
+        # Use parse_mode=None to avoid Markdown parsing errors
+        await update.message.reply_text(success_message, reply_markup=reply_markup, parse_mode=None)
         AWAITING_KEY_INPUT.discard(user_id)
         logging.info(f"User {user_id} activated key {key}")
         
@@ -2292,23 +2293,23 @@ async def handle_enter_key(update: Update, context: CallbackContext):
             "┣ ✦ ʀᴇᴀʟ-ᴛɪᴍᴇ ᴜsᴀɢᴇ ᴛʀᴀᴄᴋɪɴɢ\n\n"
             "🆕 **ɢᴇᴛ ɴᴇᴡ ᴀᴄᴄᴇss**\n"
             "ᴄᴏɴᴛᴀᴄᴛ: @Khatelynnnnnn ғᴏʀ ᴀ ɴᴇᴡ ᴘʀᴇᴍɪᴜᴍ ᴋᴇʏ.",
-            parse_mode="Markdown"
+            parse_mode=None
         )
         AWAITING_KEY_INPUT.discard(user_id)
     else:
         await update.message.reply_text(
-            "❌ **𝙰𝙲𝙲𝙴𝚂 𝙳𝙴𝙽𝙸𝙴𝙳**\n\n"
+            "❌ **𝙰𝙲𝙲𝙴𝚂𝚂 𝙳𝙴𝙽𝙸𝙴𝙳**\n\n"
             "🔍 **𝚅𝙴𝚁𝙸𝙵𝙸𝙲𝙰𝚃𝙸𝙾𝙽 𝙵𝙰𝙸𝙻𝙴𝙳**\n"
             "𝚃𝙷𝙴 𝙺𝙴𝚈 𝙳𝙸𝙳 𝙽𝙾𝚃 𝙿𝙰𝚂𝚂 𝙰𝚄𝚃𝙷𝙴𝙽𝚃𝙸𝙲𝙰𝚃𝙸𝙾𝙽.\n\n"
             "📝 **𝘾𝙊𝙍𝙍𝙀𝘾𝙏 𝙁𝙊𝙍𝙈𝘼𝙏**\n"
-            "┣ ✦ `ᴋʜᴀᴛᴇʟʏɴᴘʀᴇᴍɪᴜᴍᴋᴇʏ-xxxxxx`\n"
+            "┣ ✦ ᴋʜᴀᴛᴇʟʏɴᴘʀᴇᴍɪᴜᴍᴋᴇʏ-xxxxxx\n"
             "┣ ✦ x = 6 ᴀʟᴘʜᴀɴᴜᴍᴇʀɪᴄ ᴄʜᴀʀᴀᴄᴛᴇʀs\n\n"
-            "🛠️ **𝙏𝙧𝙮 𝙖𝙜𝙖𝙞𝙣*\n"
+            "🛠️ **𝙏𝙧𝙮 𝙖𝙜𝙖𝙞𝙣**\n"
             "𝙳𝙾𝚄𝙱𝙻𝙴 𝙲𝙷𝙴𝙲𝙺 𝚈𝙾𝚄𝚁 𝙺𝙴𝚈.\n\n"
             "👨💻 **sᴜᴘᴘᴏʀᴛ**\n"
             "𝚌𝚘𝚗𝚝𝚊𝚌𝚝: @Khatelynnnnnn 𝙵𝙾𝚁 𝙰𝚂𝚂𝙸𝚂𝚃𝙰𝙽𝙲𝙴.",
-            parse_mode="Markdown"
-        )
+            parse_mode=None
+        ) 
 
 async def prompt_for_key(update: Update, context: CallbackContext):
     current_message: Message = update.callback_query.message if update.callback_query else update.message
