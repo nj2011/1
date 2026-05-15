@@ -3906,7 +3906,14 @@ async def handle_file_processing(update: Update, context: CallbackContext):
 
     try:
         file = await document.get_file()
+        
+        # Download with progress indication
+        await processing_msg.edit_text("📥 **ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ ᴘʀᴏɢʀᴇꜱꜱ:**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
+        
         file_content = await file.download_as_bytearray()
+        
+        file_size_mb = len(file_content) / (1024 * 1024)
+        await processing_msg.edit_text(f"✅ **ꜰɪʟᴇ ᴅᴏᴡɴʟᴏᴀᴅᴇᴅ!** ({file_size_mb:.2f} MB)\n🔄 **ᴘʀᴏᴄᴇꜱꜱɪɴɢ ɪɴ ᴄʜᴜɴᴋꜱ...**")
         
         # Save uploaded file temporarily
         input_filename = f"temp_upload_{user_id}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
@@ -3915,7 +3922,7 @@ async def handle_file_processing(update: Update, context: CallbackContext):
         with open(input_filepath, "wb") as f:
             f.write(file_content)
         
-        # Process the file
+        # Process file in chunks
         remover = URLDuplicateRemover()
         option = context.user_data.get('remover_option')
         
@@ -3924,24 +3931,22 @@ async def handle_file_processing(update: Update, context: CallbackContext):
         
         # Set mode based on option
         if option == 'remove_url':
-            await processing_msg.edit_text("🌐 **ʀᴇᴍᴏᴠɪɴɢ ᴜʀʟꜱ...**")
+            await processing_msg.edit_text("🌐 **ʀᴇᴍᴏᴠɪɴɢ ᴜʀʟꜱ ɪɴ ᴄʜᴜɴᴋꜱ...**")
             mode = "remove_url"
             remove_duplicates = False
         elif option == 'remove_tg':
-            await processing_msg.edit_text("🔗 **ʀᴇᴍᴏᴠɪɴɢ ᴛᴇʟᴇɢʀᴀᴍ ʟɪɴᴋꜱ...**")
+            await processing_msg.edit_text("🔗 **ʀᴇᴍᴏᴠɪɴɢ ᴛᴇʟᴇɢʀᴀᴍ ʟɪɴᴋꜱ ɪɴ ᴄʜᴜɴᴋꜱ...**")
             mode = "remove_tg"
             remove_duplicates = False
         elif option == 'full_processing':
-            await processing_msg.edit_text("🔄 **ꜰᴜʟʟ ᴘʀᴏᴄᴇꜱꜱɪɴɢ...**")
+            await processing_msg.edit_text("🔄 **ꜰᴜʟʟ ᴘʀᴏᴄᴇꜱꜱɪɴɢ ɪɴ ᴄʜᴜɴᴋꜱ...**")
             mode = "full"
             remove_duplicates = False
         elif option == 'duplicate_removal':
-            await processing_msg.edit_text("🧹 **ʀᴇᴍᴏᴠɪɴɢ ᴅᴜᴘʟɪᴄᴀᴛᴇꜱ...**")
+            await processing_msg.edit_text("🧹 **ʀᴇᴍᴏᴠɪɴɢ ᴅᴜᴘʟɪᴄᴀᴛᴇꜱ ɪɴ ᴄʜᴜɴᴋꜱ...**")
             mode = "full"
             remove_duplicates = True
         else:
-            # Default to full processing
-            await processing_msg.edit_text("🔄 **ᴘʀᴏᴄᴇꜱꜱɪɴɢ...**")
             mode = "full"
             remove_duplicates = False
         
@@ -3950,12 +3955,59 @@ async def handle_file_processing(update: Update, context: CallbackContext):
         output_filename = f"cleaned_{timestamp}.txt"
         output_filepath = GENERATED_DIR / output_filename
         
-        # Process the file
-        success, processed, saved, tg_removed, pipe_fixed, url_removed = remover.process_file(
-            str(input_filepath), str(output_filepath), mode, remove_duplicates
-        )
+        # Process the file line by line (optimized for large files)
+        processed = 0
+        saved = 0
+        tg_removed = 0
+        pipe_fixed = 0
+        url_removed = 0
         
-        if success and saved > 0:
+        unique_creds = set() if remove_duplicates else None
+        
+        with open(input_filepath, 'r', encoding='utf-8', errors='ignore') as infile, \
+             open(output_filepath, 'w', encoding='utf-8') as outfile:
+            
+            # Process line by line
+            for line in infile:
+                processed += 1
+                original = line.strip()
+                
+                if not original:
+                    continue
+                
+                # Show progress every 10,000 lines
+                if processed % 10000 == 0:
+                    await processing_msg.edit_text(f"🔄 **ᴘʀᴏᴄᴇꜱꜱɪɴɢ...** {processed:,} ʟɪɴᴇꜱ ᴅᴏɴᴇ...")
+                
+                if mode == "remove_tg":
+                    result = remover.remove_tg_links(original)
+                    if 't.me' in original:
+                        tg_removed += 1
+                elif mode == "remove_url":
+                    result = remover.remove_urls(original)
+                    if 'http://' in original or 'https://' in original or 'www.' in original:
+                        url_removed += 1
+                else:  # full mode
+                    if 't.me' in original:
+                        tg_removed += 1
+                    if '|' in original:
+                        pipe_fixed += 1
+                    if 'http://' in original or 'https://' in original or 'www.' in original:
+                        url_removed += 1
+                    result = remover.process_line_full(original)
+                
+                if result:
+                    if remove_duplicates and result not in unique_creds:
+                        unique_creds.add(result)
+                        outfile.write(result + '\n')
+                        saved += 1
+                    elif not remove_duplicates:
+                        outfile.write(result + '\n')
+                        saved += 1
+        
+        await processing_msg.edit_text("✅ **ᴘʀᴏᴄᴇꜱꜱɪɴɢ ᴄᴏᴍᴘʟᴇᴛᴇ!**")
+        
+        if saved > 0:
             # Build caption based on mode
             if option == 'remove_url':
                 caption = (
@@ -3963,7 +4015,8 @@ async def handle_file_processing(update: Update, context: CallbackContext):
                     f"📊 **ꜱᴛᴀᴛɪꜱᴛɪᴄꜱ:**\n"
                     f"• ʟɪɴᴇꜱ ᴘʀᴏᴄᴇꜱꜱᴇᴅ: **{processed:,}**\n"
                     f"• ʟɪɴᴇꜱ ꜱᴀᴠᴇᴅ: **{saved:,}**\n"
-                    f"• ᴜʀʟꜱ ʀᴇᴍᴏᴠᴇᴅ: **{url_removed:,}**"
+                    f"• ᴜʀʟꜱ ʀᴇᴍᴏᴠᴇᴅ: **{url_removed:,}**\n"
+                    f"• ꜰɪʟᴇ ꜱɪᴢᴇ: **{file_size_mb:.2f} MB**"
                 )
             elif option == 'remove_tg':
                 caption = (
@@ -3980,7 +4033,7 @@ async def handle_file_processing(update: Update, context: CallbackContext):
                     f"• ʟɪɴᴇꜱ ᴘʀᴏᴄᴇꜱꜱᴇᴅ: **{processed:,}**\n"
                     f"• ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ ꜱᴀᴠᴇᴅ: **{saved:,}**\n"
                     f"• ʟɪɴᴋꜱ ʀᴇᴍᴏᴠᴇᴅ: **{tg_removed:,}**\n"
-                    f"• ꜰɪxᴇᴅ: **{pipe_fixed:,}**\n"
+                    f"• ᴘɪᴘᴇꜱ ꜰɪxᴇᴅ: **{pipe_fixed:,}**\n"
                     f"• ᴜʀʟꜱ ʀᴇᴍᴏᴠᴇᴅ: **{url_removed:,}**"
                 )
             else:  # duplicate_removal
@@ -4010,11 +4063,7 @@ async def handle_file_processing(update: Update, context: CallbackContext):
                 f"❌ **ᴘʀᴏᴄᴇꜱꜱɪɴɢ ꜰᴀɪʟᴇᴅ!** ❌\n\n"
                 f"ɴᴏ ᴠᴀʟɪᴅ ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ ꜰᴏᴜɴᴅ.\n"
                 f"ʟɪɴᴇꜱ ᴘʀᴏᴄᴇꜱꜱᴇᴅ: **{processed}**\n"
-                f"ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ ꜱᴀᴠᴇᴅ: **{saved}**\n\n"
-                f"💡 **ᴇxᴘᴇᴄᴛᴇᴅ ꜰᴏʀᴍᴀᴛ:**\n"
-                f"• `ᴜꜱᴇʀɴᴀᴍᴇ|ᴘᴀꜱꜱᴡᴏʀᴅ`\n"
-                f"• `ʜᴛᴛᴘꜱ://ꜱɪᴛᴇ.ᴄᴏᴍ|ᴜꜱᴇʀ|ᴘᴀꜱꜱ`\n"
-                f"• `ᴜꜱᴇʀ|ᴘᴀꜱꜱ | ʜᴛᴛᴘꜱ://ᴛ.ᴍᴇ/ʟɪɴᴋ`",
+                f"ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ ꜱᴀᴠᴇᴅ: **{saved}**",
                 parse_mode="Markdown"
             )
             
@@ -4025,7 +4074,19 @@ async def handle_file_processing(update: Update, context: CallbackContext):
                 os.remove(output_filepath)
 
     except Exception as e:
-        await processing_msg.edit_text(f"❌ **ᴇʀʀᴏʀ:** `{str(e)}`", parse_mode="Markdown")
+        error_msg = str(e)
+        if "timed out" in error_msg.lower():
+            await processing_msg.edit_text(
+                "❌ **ᴛɪᴍᴇᴏᴜᴛ ᴇʀʀᴏʀ!** ❌\n\n"
+                "ᴛʜᴇ ꜰɪʟᴇ ɪs ᴛᴏᴏ ʟᴀʀɢᴇ ᴛᴏ ᴘʀᴏᴄᴇꜱꜱ.\n\n"
+                "**ꜱᴜɢɢᴇꜱᴛɪᴏɴꜱ:**\n"
+                "• ᴜꜱᴇ ᴀ ꜱᴍᴀʟʟᴇʀ ꜰɪʟᴇ (ᴜɴᴅᴇʀ 1 MB)\n"
+                "• ꜱᴘʟɪᴛ ʏᴏᴜʀ ꜰɪʟᴇ ɪɴᴛᴏ ꜱᴍᴀʟʟᴇʀ ᴄʜᴜɴᴋꜱ\n"
+                "• ᴛʀʏ ᴀɢᴀɪɴ ᴡɪᴛʜ ᴀ ꜱᴍᴀʟʟᴇʀ ꜰɪʟᴇ",
+                parse_mode="Markdown"
+            )
+        else:
+            await processing_msg.edit_text(f"❌ **ᴇʀʀᴏʀ:** `{error_msg}`", parse_mode="Markdown")
         logging.error(f"Error in file processing: {e}")
     
     AWAITING_FILE_UPLOAD.discard(user_id)
