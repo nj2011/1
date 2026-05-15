@@ -2040,6 +2040,7 @@ async def admin_panel(update: Update, context: CallbackContext):
          InlineKeyboardButton("🗑️ 𝙳𝙴𝙻𝙴𝚃𝙴 𝚂𝙸𝙽𝙶𝙻𝙴 𝙺𝙴𝚈", callback_data="admin_delete_single_key")],
         [InlineKeyboardButton("🛠️ 𝙼𝙰𝙸𝙽𝚃𝙴𝙽𝙰𝙽𝙲𝙴 𝙼𝙾𝙳𝙴 𝙾𝙿𝚃𝙸𝙾𝙽𝚂", callback_data="show_maintenance_options")],
         [InlineKeyboardButton("👥 𝙼𝙰𝙽𝙰𝙶𝙴 𝚁𝙾𝙻𝙴𝚂", callback_data="admin_manage_roles")],
+        [InlineKeyboardButton("📁 𝙼𝙰𝙽𝙰𝙶𝙴 𝙶𝙴𝙽𝙴𝚁𝙰𝚃𝙴𝙳 𝙵𝙾𝙻𝙳𝙴𝚁", callback_data="list_generated")],
         [InlineKeyboardButton("⬅️ 𝙱𝙰𝙲𝙺 𝚃𝙾 𝙼𝙰𝙸𝙽 𝙼𝙴𝙽𝚄", callback_data="back_to_main_menu")]
     ]
     
@@ -2049,7 +2050,7 @@ async def admin_panel(update: Update, context: CallbackContext):
         await current_message.edit_text(admin_text, reply_markup=reply_markup, parse_mode="Markdown")
     else:
         await current_message.reply_text(admin_text, reply_markup=reply_markup, parse_mode="Markdown")
-
+        
 async def generate_key_command(update: Update, context: CallbackContext):
     current_message: Message = update.message if update.message else update.callback_query.message if update.callback_query else None
     if not current_message:
@@ -2363,37 +2364,38 @@ async def prompt_for_key(update: Update, context: CallbackContext):
 # ========== DATABASE GENERATION FUNCTIONS ==========
 async def generate_menu(update: Update, context: CallbackContext):
     current_message: Message = update.callback_query.message if update.callback_query else update.message
+    query = update.callback_query  # Get callback query if exists
 
     user_id = update.effective_user.id
     
     if MAINTENANCE_MODE and user_id != ADMIN_ID:
-        if update.callback_query:
-            await current_message.answer("🛠️ Bot is under maintenance!", show_alert=True)
+        if query:
+            await query.answer("🛠️ Bot is under maintenance!", show_alert=True)
             await current_message.edit_text(
-                "🛠️ **The Bot Is Maintenance**\n\n"
+                "🛠️ **The Bot Is Under Maintenance**\n\n"
                 "ᴛʜᴇ ʙᴏᴛ ɪs ᴄᴜʀʀᴇɴᴛʟʏ ᴜɴᴅᴇʀɢᴏɪɴɢ ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ. ᴘʟᴇᴀsᴇ ᴛʀʏ ᴀɢᴀɪɴ ʟᴀᴛᴇʀ!",
                 parse_mode="Markdown"
             )
         else:
             await current_message.reply_text(
-                "🛠️ **The Bot Is Maintenance**\n\n"
+                "🛠️ **The Bot Is Under Maintenance**\n\n"
                 "ᴛʜᴇ ʙᴏᴛ ɪs ᴄᴜʀʀᴇɴᴛʟʏ ᴜɴᴅᴇʀɢᴏɪɴɢ ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ. ᴘʟᴇᴀsᴇ ᴛʀʏ ᴀɢᴀɪɴ ʟᴀᴛᴇʀ!",
                 parse_mode="Markdown"
             )
         return
 
     if not has_access(user_id):
-        if update.callback_query:
-            await current_message.answer("🔒 ᴘʀᴇᴍɪᴜᴍ ᴀᴄᴄᴇss ʀᴇǫᴜɪʀᴇᴅ!", show_alert=True)
+        if query:
+            await query.answer("🔒 Premium Access Required!", show_alert=True)
             await current_message.edit_text(
-                "🔒 **ᴘʀᴇᴍɪᴜᴍ ᴀᴄᴄᴇss ʀᴇǫᴜɪʀᴇᴅ!**\n\n"
-                "ʏᴏᴜ ɴᴇᴇᴅ ᴀᴄᴛɪᴠᴇ ᴘʀᴇᴍɪᴜᴍ ᴀᴄᴄᴇss ᴛᴏ ɢᴇɴᴇʀᴀᴛᴇ ғɪʟᴇs. ᴘʟᴇᴀsᴇ ᴜsᴇ ᴀɴ ᴘʀᴇᴍɪᴜᴍ ᴋᴇʏ ᴏʀ ᴄᴏɴᴛᴀᴄᴛ ᴛʜᴇ ᴀᴅᴍɪɴ ᴛᴏ ᴘᴜʀᴄʜᴀsᴇ ᴋᴇʏ.",
+                "🔒 **Premium Access Required!**\n\n"
+                "You need active premium access to generate files. Please use an access key or contact @Khatelynnnnnn to purchase access.",
                 parse_mode="Markdown"
             )
         else:
             await current_message.reply_text(
-                "🔒 **ᴘʀᴇᴍɪᴜᴍ ᴀᴄᴄᴇss ʀᴇǫᴜɪʀᴇᴅ!**\n\n"
-                "ʏᴏᴜ ɴᴇᴇᴅ ᴀᴄᴛɪᴠᴇ ᴘʀᴇᴍɪᴜᴍ ᴀᴄᴄᴇss ᴛᴏ ɢᴇɴᴇʀᴀᴛᴇ ғɪʟᴇs. ᴘʟᴇᴀsᴇ ᴜsᴇ ᴀɴ ᴘʀᴇᴍɪᴜᴍ ᴋᴇʏ ᴏʀ ᴄᴏɴᴛᴀᴄᴛ ᴛʜᴇ ᴀᴅᴍɪɴ ᴛᴏ ᴘᴜʀᴄʜᴀsᴇ ᴋᴇʏ.",
+                "🔒 **Premium Access Required!**\n\n"
+                "You need active premium access to generate files. Please use an access key or contact @Khatelynnnnnn to purchase access.",
                 parse_mode="Markdown"
             )
         return
@@ -2414,11 +2416,11 @@ async def generate_menu(update: Update, context: CallbackContext):
         f"▶︎ *ʀᴇᴀᴅʏ ᴛᴏ ɢᴇɴᴇʀᴀᴛᴇ ᴘʀᴇᴍɪᴜᴍ ғɪʟᴇs!*"
     )
     
-    if update.callback_query:
-        await update.callback_query.message.edit_text(menu_text, reply_markup=reply_markup, parse_mode="Markdown")
+    if query:
+        await current_message.edit_text(menu_text, reply_markup=reply_markup, parse_mode="Markdown")
     else:
-        await update.message.reply_text(menu_text, reply_markup=reply_markup, parse_mode="Markdown")
-
+        await current_message.reply_text(menu_text, reply_markup=reply_markup, parse_mode="Markdown")
+        
 async def database_menu(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
@@ -3470,34 +3472,38 @@ async def start_encryption(update: Update, context: CallbackContext) -> int:
         return ConversationHandler.END
 
     user_id = update.effective_user.id
+    
+    # Get the callback query if it exists (for answering)
+    query = update.callback_query
+    
     if MAINTENANCE_MODE and user_id != ADMIN_ID:
-        if update.callback_query:
-            await current_message.answer("🛠️ Bot is under maintenance!", show_alert=True)
+        if query:
+            await query.answer("🛠️ Bot is under maintenance!", show_alert=True)
             await current_message.edit_text(
-                "🛠️ **The Bot Is Maintenance**\n\n"
-                "ᴛʜᴇ ʙᴏᴛ ɪs ᴄᴜʀʀᴇɴᴛʟʏ ᴜɴᴅᴇʀɴɢᴏɪɴɢ ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ. ᴘʟᴇᴀsᴇ ᴛʀʏ ᴀɢᴀɪɴ ʟᴀᴛᴇʀ!",
+                "🛠️ **The Bot Is Under Maintenance**\n\n"
+                "ᴛʜᴇ ʙᴏᴛ ɪs ᴄᴜʀʀᴇɴᴛʟʏ ᴜɴᴅᴇʀɢᴏɪɴɢ ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ. ᴘʟᴇᴀsᴇ ᴛʀʏ ᴀɢᴀɪɴ ʟᴀᴛᴇʀ!",
                 parse_mode="Markdown"
             )
         else:
             await current_message.reply_text(
-                "🛠️ **The Bot Is Maintenance**\n\n"
-                "ᴛʜᴇ ʙᴏᴛ ɪs ᴄᴜʀʀᴇɴᴛʟʏ ᴜɴᴅᴇʀɢᴏɪɴɢ ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ. ᴘʟᴇᴀsᴇ ᴛʀʏ ᴀɴɢᴀɪɴ ʟᴀᴛᴇʀ!",
+                "🛠️ **The Bot Is Under Maintenance**\n\n"
+                "ᴛʜᴇ ʙᴏᴛ ɪs ᴄᴜʀʀᴇɴᴛʟʏ ᴜɴᴅᴇʀɢᴏɪɴɢ ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ. ᴘʟᴇᴀsᴇ ᴛʀʏ ᴀɢᴀɪɴ ʟᴀᴛᴇʀ!",
                 parse_mode="Markdown"
             )
         return ConversationHandler.END
 
     if not has_access(user_id):
-        if update.callback_query:
-            await current_message.answer("🔒 Premium Access Required!", show_alert=True)
+        if query:
+            await query.answer("🔒 Premium Access Required!", show_alert=True)
             await current_message.edit_text(
                 "🔒 **Premium Access Required!**\n\n"
-                "You need active premium access to use the Python Encryptor. Please use an access key or contact @cluddydumpy to purchase access.",
+                "You need active premium access to use the Python Encryptor. Please use an access key or contact @Khatelynnnnnn to purchase access.",
                 parse_mode="Markdown"
             )
         else:
             await current_message.reply_text(
                 "🔒 **Premium Access Required!**\n\n"
-                "You need active premium access to use the Python Encryptor. Please use an access key or contact @cluddydumpy to purchase access.",
+                "You need active premium access to use the Python Encryptor. Please use an access key or contact @Khatelynnnnnn to purchase access.",
                 parse_mode="Markdown"
             )
         return ConversationHandler.END
@@ -3509,7 +3515,7 @@ async def start_encryption(update: Update, context: CallbackContext) -> int:
         "Welcome to the advanced Python script protection suite!\n"
         "Choose your desired encryption enchantment from the options below to transform your scripts. ✨"
     )
-    if update.callback_query:
+    if query:
         await current_message.edit_text(message_text, reply_markup=reply_markup_methods, parse_mode='Markdown')
     else:
         await current_message.reply_text(message_text, reply_markup=reply_markup_methods, parse_mode='Markdown')
@@ -3796,7 +3802,403 @@ async def cancel_encryption(update: Update, context: CallbackContext) -> int:
     
     await start(update, context)
     return ConversationHandler.END
+    
+# ========== GENERATED FOLDER MANAGEMENT FUNCTIONS (ADMIN ONLY) ==========
+import zipfile
+from io import BytesIO
 
+async def list_generated_files(update: Update, context: CallbackContext):
+    """List all files in the generated folder with download options (Admin only)"""
+    current_message: Message = update.callback_query.message if update.callback_query else update.message
+    if not current_message:
+        return
+
+    user_id = update.effective_user.id
+    
+    # STRICT ADMIN ONLY - NO ONE ELSE CAN ACCESS
+    if user_id != ADMIN_ID:
+        if update.callback_query:
+            await update.callback_query.answer("❌ Admin only!", show_alert=True)
+        else:
+            await current_message.reply_text("❌ You are not authorized to use this command.")
+        return
+
+    if not GENERATED_DIR.exists():
+        await current_message.edit_text("📁 **Generated folder doesn't exist yet.**", parse_mode="Markdown")
+        return
+
+    files = list(GENERATED_DIR.glob("*"))
+    files = [f for f in files if f.is_file()]
+    
+    if not files:
+        await current_message.edit_text("📁 **Generated folder is empty.**\n\nNo files to display.", parse_mode="Markdown")
+        return
+
+    # Sort by modification time (newest first)
+    files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    
+    # Calculate total size
+    total_size = sum(f.stat().st_size for f in files)
+    if total_size < 1024:
+        total_size_str = f"{total_size} B"
+    elif total_size < 1024 * 1024:
+        total_size_str = f"{total_size / 1024:.1f} KB"
+    else:
+        total_size_str = f"{total_size / (1024 * 1024):.1f} MB"
+    
+    # Limit displayed files to 50 to avoid message overflow
+    total_files = len(files)
+    display_files = files[:50]
+    
+    message = "**📁 𝙶𝙴𝙽𝙴𝚁𝙰𝚃𝙴𝙳 𝙵𝙾𝙻𝙳𝙴𝚁 𝙲𝙾𝙽𝚃𝙴𝙽𝚃𝚂** 📁\n\n"
+    message += f"📊 **𝚃𝚘𝚝𝚊𝚕 𝙵𝚒𝚕𝚎𝚜:** {total_files}\n"
+    message += f"💾 **𝚃𝚘𝚝𝚊𝚕 𝚂𝚒𝚣𝚎:** {total_size_str}\n\n"
+    
+    for file in display_files:
+        size = file.stat().st_size
+        if size < 1024:
+            size_str = f"{size} B"
+        elif size < 1024 * 1024:
+            size_str = f"{size / 1024:.1f} KB"
+        else:
+            size_str = f"{size / (1024 * 1024):.1f} MB"
+        
+        created = datetime.datetime.fromtimestamp(file.stat().st_ctime).strftime("%Y-%m-%d %H:%M:%S")
+        name = file.name[:40] + "..." if len(file.name) > 40 else file.name
+        message += f"📄 `{name}`\n"
+        message += f"   └ 𝚂𝚒𝚣𝚎: {size_str} | 𝙲𝚛𝚎𝚊𝚝𝚎𝚍: {created}\n\n"
+    
+    if total_files > 50:
+        message += f"\n⚠️ 𝚂𝚑𝚘𝚠𝚒𝚗𝚐 𝚏𝚒𝚛𝚜𝚝 50 𝚘𝚏 {total_files} 𝚏𝚒𝚕𝚎𝚜.\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("📥 𝙳𝙾𝚆𝙽𝙻𝙾𝙰𝙳 𝚂𝙸𝙽𝙶𝙻𝙴 𝙵𝙸𝙻𝙴", callback_data="download_file_prompt")],
+        [InlineKeyboardButton("🗜️ 𝙳𝙾𝚆𝙽𝙻𝙾𝙰𝙳 𝙰𝙻𝙻 𝙰𝚂 𝚉𝙸𝙿", callback_data="download_all_files_zip")],
+        [InlineKeyboardButton("🗑️ 𝙳𝙴𝙻𝙴𝚃𝙴 𝙰𝙻𝙻 𝙵𝙸𝙻𝙴𝚂", callback_data="delete_all_files")],
+        [InlineKeyboardButton("🧹 𝙲𝙻𝙴𝙰𝙽 𝙾𝙻𝙳 𝙵𝙸𝙻𝙴𝚂", callback_data="clean_old_files")],
+        [InlineKeyboardButton("⬅️ 𝙱𝙰𝙲𝙺 𝚃𝙾 𝙰𝙳𝙼𝙸𝙽 𝙿𝙰𝙽𝙴𝙻", callback_data="show_admin_panel")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if update.callback_query:
+        await current_message.edit_text(message, reply_markup=reply_markup, parse_mode="Markdown")
+    else:
+        await current_message.reply_text(message, reply_markup=reply_markup, parse_mode="Markdown")
+
+
+async def download_file_prompt(update: Update, context: CallbackContext):
+    """Prompt admin to enter filename for download"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if user_id != ADMIN_ID:
+        await query.answer("❌ Admin only!", show_alert=True)
+        return
+    
+    await query.answer()
+    
+    # Get list of files for suggestions
+    if not GENERATED_DIR.exists():
+        await query.message.edit_text("📁 **𝙶𝚎𝚗𝚎𝚛𝚊𝚝𝚎𝚍 𝚏𝚘𝚕𝚍𝚎𝚛 𝚍𝚘𝚎𝚜𝚗'𝚝 𝚎𝚡𝚒𝚜𝚝.**", parse_mode="Markdown")
+        return
+    
+    files = list(GENERATED_DIR.glob("*.txt")) + list(GENERATED_DIR.glob("*.py"))
+    files = [f for f in files if f.is_file()]
+    
+    if not files:
+        await query.message.edit_text("📁 **𝙽𝚘 𝚏𝚒𝚕𝚎𝚜 𝚊𝚟𝚊𝚒𝚕𝚊𝚋𝚕𝚎 𝚝𝚘 𝚍𝚘𝚠𝚗𝚕𝚘𝚊𝚍.**", parse_mode="Markdown")
+        return
+    
+    # Create keyboard with file buttons
+    keyboard = []
+    for file in files[:20]:  # Max 20 files in keyboard
+        name = file.name[:40]
+        keyboard.append([InlineKeyboardButton(f"📄 {name}", callback_data=f"download_this_file:{file.name}")])
+    
+    keyboard.append([InlineKeyboardButton("⬅️ 𝙱𝙰𝙲𝙺", callback_data="list_generated")])
+    
+    await query.message.edit_text(
+        "**📥 𝙳𝙾𝚆𝙽𝙻𝙾𝙰𝙳 𝙵𝙸𝙻𝙴**\n\n"
+        "𝚂𝚎𝚕𝚎𝚌𝚝 𝚊 𝚏𝚒𝚕𝚎 𝚝𝚘 𝚍𝚘𝚠𝚗𝚕𝚘𝚊𝚍:\n"
+        f"📊 𝚃𝚘𝚝𝚊𝚕 𝚊𝚟𝚊𝚒𝚕𝚊𝚋𝚕𝚎: {len(files)} 𝚏𝚒𝚕𝚎𝚜\n\n"
+        "⬇️ 𝙲𝚕𝚒𝚌𝚔 𝚘𝚗 𝚊𝚗𝚢 𝚏𝚒𝚕𝚎 𝚝𝚘 𝚍𝚘𝚠𝚗𝚕𝚘𝚊𝚍 𝚒𝚝 𝚒𝚗𝚜𝚝𝚊𝚗𝚝𝚕𝚢.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+
+async def download_specific_file(update: Update, context: CallbackContext):
+    """Download a specific file by name"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if user_id != ADMIN_ID:
+        await query.answer("❌ Admin only!", show_alert=True)
+        return
+    
+    await query.answer()
+    
+    filename = query.data.replace("download_this_file:", "")
+    filepath = GENERATED_DIR / filename
+    
+    if not filepath.exists():
+        await query.message.edit_text(f"❌ **𝙵𝚒𝚕𝚎 𝚗𝚘𝚝 𝚏𝚘𝚞𝚗𝚍:** `{filename}`\n\n𝙸𝚝 𝚖𝚊𝚢 𝚑𝚊𝚟𝚎 𝚋𝚎𝚎𝚗 𝚍𝚎𝚕𝚎𝚝𝚎𝚍 𝚊𝚕𝚛𝚎𝚊𝚍𝚢.", parse_mode="Markdown")
+        return
+    
+    size_mb = filepath.stat().st_size / (1024 * 1024)
+    
+    await query.message.edit_text(f"📥 **𝙳𝚘𝚠𝚗𝚕𝚘𝚊𝚍𝚒𝚗𝚐:** `{filename}`\n📊 𝚂𝚒𝚣𝚎: {size_mb:.2f} MB", parse_mode="Markdown")
+    
+    with open(filepath, "rb") as f:
+        await context.bot.send_document(
+            chat_id=query.message.chat_id,
+            document=f,
+            filename=filename,
+            caption=f"📁 **𝙵𝚒𝚕𝚎:** `{filename}`\n💾 𝚂𝚒𝚣𝚎: {size_mb:.2f} MB\n🕐 𝙳𝚘𝚠𝚗𝚕𝚘𝚊𝚍𝚎𝚍: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            parse_mode="Markdown"
+        )
+    
+    # Go back to file list
+    await list_generated_files(update, context)
+
+
+async def download_all_files_zip(update: Update, context: CallbackContext):
+    """Download entire generated folder as ZIP archive (Admin only)"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if user_id != ADMIN_ID:
+        await query.answer("❌ Admin only!", show_alert=True)
+        return
+    
+    await query.answer()
+    
+    if not GENERATED_DIR.exists():
+        await query.message.edit_text("📁 **𝙶𝚎𝚗𝚎𝚛𝚊𝚝𝚎𝚍 𝚏𝚘𝚕𝚍𝚎𝚛 𝚍𝚘𝚎𝚜𝚗'𝚝 𝚎𝚡𝚒𝚜𝚝.**", parse_mode="Markdown")
+        return
+    
+    files = list(GENERATED_DIR.glob("*"))
+    files = [f for f in files if f.is_file()]
+    
+    if not files:
+        await query.message.edit_text("📁 **𝙽𝚘 𝚏𝚒𝚕𝚎𝚜 𝚝𝚘 𝚣𝚒𝚙.**", parse_mode="Markdown")
+        return
+    
+    await query.message.edit_text(
+        f"🗜️ **𝙲𝚛𝚎𝚊𝚝𝚒𝚗𝚐 𝚉𝙸𝙿 𝚊𝚛𝚌𝚑𝚒𝚟𝚎...**\n\n"
+        f"📊 𝙵𝚒𝚕𝚎𝚜 𝚝𝚘 𝚙𝚊𝚌𝚔: {len(files)}\n"
+        f"⏳ 𝙿𝚕𝚎𝚊𝚜𝚎 𝚠𝚊𝚒𝚝, 𝚝𝚑𝚒𝚜 𝚖𝚊𝚢 𝚝𝚊𝚔𝚎 𝚊 𝚖𝚘𝚖𝚎𝚗𝚝...",
+        parse_mode="Markdown"
+    )
+    
+    try:
+        # Create ZIP in memory
+        zip_buffer = BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for file in files:
+                # Add file to zip with its name
+                zip_file.write(file, file.name)
+        
+        zip_buffer.seek(0)
+        
+        # Get total size
+        zip_size_mb = len(zip_buffer.getvalue()) / (1024 * 1024)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        zip_filename = f"generated_folder_backup_{timestamp}.zip"
+        
+        await context.bot.send_document(
+            chat_id=query.message.chat_id,
+            document=zip_buffer,
+            filename=zip_filename,
+            caption=f"🗜️ **𝙶𝚎𝚗𝚎𝚛𝚊𝚝𝚎𝚍 𝙵𝚘𝚕𝚍𝚎𝚛 𝙱𝚊𝚌𝚔𝚞𝚙**\n\n"
+                    f"📊 **𝙵𝚒𝚕𝚎𝚜 𝚒𝚗𝚌𝚕𝚞𝚍𝚎𝚍:** {len(files)}\n"
+                    f"💾 **𝙲𝚘𝚖𝚙𝚛𝚎𝚜𝚜𝚎𝚍 𝚜𝚒𝚣𝚎:** {zip_size_mb:.2f} MB\n"
+                    f"🕐 **𝙲𝚛𝚎𝚊𝚝𝚎𝚍:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                    f"⚠️ 𝚃𝚑𝚒𝚜 𝚒𝚜 𝚊 𝚋𝚊𝚌𝚔𝚞𝚙 𝚘𝚏 𝚊𝚕𝚕 𝚏𝚒𝚕𝚎𝚜 𝚒𝚗 𝚝𝚑𝚎 𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎𝚍 𝚏𝚘𝚕𝚍𝚎𝚛.",
+            parse_mode="Markdown"
+        )
+        
+        await query.message.edit_text(
+            f"✅ **𝚉𝙸𝙿 𝚌𝚛𝚎𝚊𝚝𝚎𝚍 𝚊𝚗𝚍 𝚜𝚎𝚗𝚝!**\n\n"
+            f"📊 𝙵𝚒𝚕𝚎𝚜 𝚋𝚊𝚌𝚔𝚎𝚍 𝚞𝚙: {len(files)}\n"
+            f"💾 𝚂𝚒𝚣𝚎: {zip_size_mb:.2f} MB\n\n"
+            f"⬅️ 𝚄𝚜𝚎 𝚝𝚑𝚎 𝚋𝚞𝚝𝚝𝚘𝚗 𝚋𝚎𝚕𝚘𝚠 𝚝𝚘 𝚐𝚘 𝚋𝚊𝚌𝚔.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ 𝙱𝙰𝙲𝙺 𝚃𝙾 𝙵𝙾𝙻𝙳𝙴𝚁", callback_data="list_generated")]]),
+            parse_mode="Markdown"
+        )
+        
+    except Exception as e:
+        logging.error(f"ZIP creation error: {e}")
+        await query.message.edit_text(
+            f"❌ **𝙵𝚊𝚒𝚕𝚎𝚍 𝚝𝚘 𝚌𝚛𝚎𝚊𝚝𝚎 𝚉𝙸𝙿!**\n\n𝙴𝚛𝚛𝚘𝚛: `{str(e)[:200]}`",
+            parse_mode="Markdown"
+        )
+
+
+async def delete_all_files(update: Update, context: CallbackContext):
+    """Delete all files in generated folder (Admin only)"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if user_id != ADMIN_ID:
+        await query.answer("❌ Admin only!", show_alert=True)
+        return
+    
+    await query.answer()
+    
+    if not GENERATED_DIR.exists():
+        await query.message.edit_text("📁 **𝙶𝚎𝚗𝚎𝚛𝚊𝚝𝚎𝚍 𝚏𝚘𝚕𝚍𝚎𝚛 𝚍𝚘𝚎𝚜𝚗'𝚝 𝚎𝚡𝚒𝚜𝚝.**", parse_mode="Markdown")
+        return
+    
+    files = list(GENERATED_DIR.glob("*"))
+    files = [f for f in files if f.is_file()]
+    
+    if not files:
+        await query.message.edit_text("📁 **𝙽𝚘 𝚏𝚒𝚕𝚎𝚜 𝚝𝚘 𝚍𝚎𝚕𝚎𝚝𝚎.**", parse_mode="Markdown")
+        return
+    
+    # Ask for confirmation
+    keyboard = [
+        [InlineKeyboardButton("✅ 𝚈𝙴𝚂, 𝙳𝙴𝙻𝙴𝚃𝙴 𝙰𝙻𝙻", callback_data="confirm_delete_all")],
+        [InlineKeyboardButton("❌ 𝙽𝙾, 𝙲𝙰𝙽𝙲𝙴𝙻", callback_data="list_generated")]
+    ]
+    
+    await query.message.edit_text(
+        f"⚠️ **𝚆𝙰𝚁𝙽𝙸𝙽𝙶: 𝙳𝙴𝙻𝙴𝚃𝙴 𝙰𝙻𝙻 𝙵𝙸𝙻𝙴𝚂** ⚠️\n\n"
+        f"📊 𝙵𝚒𝚕𝚎𝚜 𝚝𝚘 𝚍𝚎𝚕𝚎𝚝𝚎: **{len(files)}**\n"
+        f"💾 𝚃𝚘𝚝𝚊𝚕 𝚜𝚒𝚣𝚎: **{sum(f.stat().st_size for f in files) / (1024 * 1024):.2f} MB**\n\n"
+        f"**𝚃𝚑𝚒𝚜 𝚊𝚌𝚝𝚒𝚘𝚗 𝚌𝚊𝚗𝚗𝚘𝚝 𝚋𝚎 𝚞𝚗𝚍𝚘𝚗𝚎!**\n\n"
+        f"𝙰𝚛𝚎 𝚢𝚘𝚞 𝚜𝚞𝚛𝚎 𝚢𝚘𝚞 𝚠𝚊𝚗𝚝 𝚝𝚘 𝚍𝚎𝚕𝚎𝚝𝚎 𝙰𝙻𝙻 𝚏𝚒𝚕𝚎𝚜 𝚒𝚗 𝚝𝚑𝚎 𝚐𝚎𝚗𝚎𝚛𝚊𝚝𝚎𝚍 𝚏𝚘𝚕𝚍𝚎𝚛?",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+
+async def confirm_delete_all(update: Update, context: CallbackContext):
+    """Confirm and delete all files"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if user_id != ADMIN_ID:
+        await query.answer("❌ Admin only!", show_alert=True)
+        return
+    
+    await query.answer()
+    
+    if not GENERATED_DIR.exists():
+        await query.message.edit_text("📁 **𝙶𝚎𝚗𝚎𝚛𝚊𝚝𝚎𝚍 𝚏𝚘𝚕𝚍𝚎𝚛 𝚍𝚘𝚎𝚜𝚗'𝚝 𝚎𝚡𝚒𝚜𝚝.**", parse_mode="Markdown")
+        return
+    
+    files = list(GENERATED_DIR.glob("*"))
+    files = [f for f in files if f.is_file()]
+    
+    deleted_count = 0
+    failed_count = 0
+    
+    for file in files:
+        try:
+            os.remove(file)
+            deleted_count += 1
+        except Exception as e:
+            logging.error(f"Failed to delete {file}: {e}")
+            failed_count += 1
+    
+    await query.message.edit_text(
+        f"🗑️ **𝙳𝚎𝚕𝚎𝚝𝚎 𝙾𝚙𝚎𝚛𝚊𝚝𝚒𝚘𝚗 𝙲𝚘𝚖𝚙𝚕𝚎𝚝𝚎**\n\n"
+        f"✅ 𝚂𝚞𝚌𝚌𝚎𝚜𝚜𝚏𝚞𝚕𝚕𝚢 𝚍𝚎𝚕𝚎𝚝𝚎𝚍: **{deleted_count}** 𝚏𝚒𝚕𝚎𝚜\n"
+        f"❌ 𝙵𝚊𝚒𝚕𝚎𝚍 𝚝𝚘 𝚍𝚎𝚕𝚎𝚝𝚎: **{failed_count}** 𝚏𝚒𝚕𝚎𝚜\n\n"
+        f"⬅️ 𝚄𝚜𝚎 𝚝𝚑𝚎 𝚋𝚞𝚝𝚝𝚘𝚗 𝚋𝚎𝚕𝚘𝚠 𝚝𝚘 𝚛𝚎𝚏𝚛𝚎𝚜𝚑.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ 𝚁𝙴𝙵𝚁𝙴𝚂𝙷 𝙵𝙾𝙻𝙳𝙴𝚁", callback_data="list_generated")]]),
+        parse_mode="Markdown"
+    )
+
+
+async def clean_old_files(update: Update, context: CallbackContext):
+    """Delete files older than specified days (Admin only)"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if user_id != ADMIN_ID:
+        await query.answer("❌ Admin only!", show_alert=True)
+        return
+    
+    await query.answer()
+    
+    keyboard = [
+        [InlineKeyboardButton("1 𝙳𝙰𝚈", callback_data="clean_days:1"),
+         InlineKeyboardButton("3 𝙳𝙰𝚈𝚂", callback_data="clean_days:3"),
+         InlineKeyboardButton("7 𝙳𝙰𝚈𝚂", callback_data="clean_days:7")],
+        [InlineKeyboardButton("30 𝙳𝙰𝚈𝚂", callback_data="clean_days:30"),
+         InlineKeyboardButton("60 𝙳𝙰𝚈𝚂", callback_data="clean_days:60"),
+         InlineKeyboardButton("90 𝙳𝙰𝚈𝚂", callback_data="clean_days:90")],
+        [InlineKeyboardButton("⬅️ 𝙱𝙰𝙲𝙺", callback_data="list_generated")]
+    ]
+    
+    await query.message.edit_text(
+        "🧹 **𝙲𝙻𝙴𝙰𝙽 𝙾𝙻𝙳 𝙵𝙸𝙻𝙴𝚂** 🧹\n\n"
+        "𝚂𝚎𝚕𝚎𝚌𝚝 𝚑𝚘𝚠 𝚖𝚊𝚗𝚢 𝚍𝚊𝚢𝚜 𝚋𝚊𝚌𝚔 𝚝𝚘 𝚔𝚎𝚎𝚙:\n\n"
+        "📌 **𝙴𝚡𝚊𝚖𝚙𝚕𝚎:**\n"
+        "• `7 𝙳𝙰𝚈𝚂` - 𝙺𝚎𝚎𝚙 𝚏𝚒𝚕𝚎𝚜 𝚏𝚛𝚘𝚖 𝚕𝚊𝚜𝚝 7 𝚍𝚊𝚢𝚜, 𝚍𝚎𝚕𝚎𝚝𝚎 𝚘𝚕𝚍𝚎𝚛\n"
+        "• `30 𝙳𝙰𝚈𝚂` - 𝙺𝚎𝚎𝚙 𝚏𝚒𝚕𝚎𝚜 𝚏𝚛𝚘𝚖 𝚕𝚊𝚜𝚝 30 𝚍𝚊𝚢𝚜\n\n"
+        "⚠️ 𝙵𝚒𝚕𝚎𝚜 𝚗𝚎𝚠𝚎𝚛 𝚝𝚑𝚊𝚗 𝚝𝚑𝚎 𝚜𝚎𝚕𝚎𝚌𝚝𝚎𝚍 𝚍𝚊𝚢𝚜 𝚠𝚒𝚕𝚕 𝚋𝚎 𝙺𝙴𝙿𝚃.\n"
+        "𝙵𝚒𝚕𝚎𝚜 𝚘𝚕𝚍𝚎𝚛 𝚠𝚒𝚕𝚕 𝚋𝚎 𝙳𝙴𝙻𝙴𝚃𝙴𝙳.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+
+async def handle_clean_days(update: Update, context: CallbackContext):
+    """Process clean files by days"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if user_id != ADMIN_ID:
+        await query.answer("❌ Admin only!", show_alert=True)
+        return
+    
+    await query.answer()
+    
+    days = int(query.data.replace("clean_days:", ""))
+    cutoff_time = datetime.datetime.now().timestamp() - (days * 24 * 60 * 60)
+    
+    if not GENERATED_DIR.exists():
+        await query.message.edit_text("📁 **𝙶𝚎𝚗𝚎𝚛𝚊𝚝𝚎𝚍 𝚏𝚘𝚕𝚍𝚎𝚛 𝚍𝚘𝚎𝚜𝚗'𝚝 𝚎𝚡𝚒𝚜𝚝.**", parse_mode="Markdown")
+        return
+    
+    files = list(GENERATED_DIR.glob("*"))
+    files = [f for f in files if f.is_file()]
+    
+    deleted_count = 0
+    kept_count = 0
+    failed_count = 0
+    deleted_size = 0
+    
+    for file in files:
+        file_age = file.stat().st_ctime
+        if file_age < cutoff_time:
+            try:
+                deleted_size += file.stat().st_size
+                os.remove(file)
+                deleted_count += 1
+            except Exception as e:
+                logging.error(f"Failed to delete {file}: {e}")
+                failed_count += 1
+        else:
+            kept_count += 1
+    
+    deleted_size_mb = deleted_size / (1024 * 1024)
+    
+    await query.message.edit_text(
+        f"🧹 **𝙲𝙻𝙴𝙰𝙽 𝙾𝙻𝙳 𝙵𝙸𝙻𝙴𝚂 𝙲𝙾𝙼𝙿𝙻𝙴𝚃𝙴** 🧹\n\n"
+        f"📅 𝙺𝚎𝚙𝚝 𝚏𝚒𝚕𝚎𝚜 𝚏𝚛𝚘𝚖 𝚕𝚊𝚜𝚝: **{days} 𝚍𝚊𝚢𝚜**\n\n"
+        f"✅ **𝙳𝚎𝚕𝚎𝚝𝚎𝚍:** {deleted_count} 𝚏𝚒𝚕𝚎𝚜 ({deleted_size_mb:.2f} MB)\n"
+        f"📁 **𝙺𝚎𝚙𝚝:** {kept_count} 𝚏𝚒𝚕𝚎𝚜\n"
+        f"❌ **𝙵𝚊𝚒𝚕𝚎𝚍:** {failed_count} 𝚏𝚒𝚕𝚎𝚜\n\n"
+        f"⬅️ 𝚄𝚜𝚎 𝚝𝚑𝚎 𝚋𝚞𝚝𝚝𝚘𝚗 𝚋𝚎𝚕𝚘𝚠 𝚝𝚘 𝚛𝚎𝚏𝚛𝚎𝚜𝚑.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ 𝚁𝙴𝙵𝚁𝙴𝚂𝙷 𝙵𝙾𝙻𝙳𝙴𝚁", callback_data="list_generated")]]),
+        parse_mode="Markdown"
+    )
 # ========== URL & DUPLICATE REMOVER FUNCTIONS ==========
 async def url_duplicate_remover_menu(update: Update, context: CallbackContext):
     current_message: Message = update.callback_query.message if update.callback_query else update.message
@@ -3902,27 +4304,56 @@ async def handle_file_processing(update: Update, context: CallbackContext):
         AWAITING_FILE_UPLOAD.discard(user_id)
         return
 
-    processing_msg = await update.message.reply_text("📥 **ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ ꜰɪʟᴇ...**")
+    # Check file size (Telegram max is 50MB)
+    file_size_mb = document.file_size / (1024 * 1024)
+    MAX_FILE_MB = 48  # Leave 2MB buffer for safety
+    
+    if document.file_size > MAX_FILE_MB * 1024 * 1024:
+        await update.message.reply_text(
+            f"❌ **File too large!**\n\n"
+            f"Your file: `{file_size_mb:.1f} MB`\n"
+            f"Max allowed: `{MAX_FILE_MB} MB`\n\n"
+            f"Please split your file into smaller chunks (under 30MB recommended).",
+            parse_mode="Markdown"
+        )
+        AWAITING_FILE_UPLOAD.discard(user_id)
+        return
+
+    processing_msg = await update.message.reply_text(
+        f"📥 **ᴘʀᴏᴄᴇꜱꜱɪɴɢ ꜰɪʟᴇ ({file_size_mb:.2f} MB)...**\n"
+        f"🔄 ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ...",
+        parse_mode="Markdown"
+    )
 
     try:
-        file = await document.get_file()
-        
-        # Download with progress indication
-        await processing_msg.edit_text("📥 **ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ ᴘʀᴏɢʀᴇꜱꜱ:**\n⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0%")
-        
-        file_content = await file.download_as_bytearray()
-        
-        file_size_mb = len(file_content) / (1024 * 1024)
-        await processing_msg.edit_text(f"✅ **ꜰɪʟᴇ ᴅᴏᴡɴʟᴏᴀᴅᴇᴅ!** ({file_size_mb:.2f} MB)\n🔄 **ᴘʀᴏᴄᴇꜱꜱɪɴɢ ɪɴ ᴄʜᴜɴᴋꜱ...**")
-        
-        # Save uploaded file temporarily
-        input_filename = f"temp_upload_{user_id}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        # Create temporary file paths
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        input_filename = f"temp_upload_{user_id}_{timestamp}.txt"
         input_filepath = GENERATED_DIR / input_filename
         
-        with open(input_filepath, "wb") as f:
-            f.write(file_content)
+        # Use telegram's built-in download with progress
+        file = await document.get_file()
         
-        # Process file in chunks
+        # Download with custom progress (telegram's method)
+        downloaded = 0
+        last_percent = 0
+        
+        # Open file for writing
+        with open(input_filepath, 'wb') as f:
+            # Download in chunks using telegram's file download
+            # We'll use a simple approach that works with telegram
+            file_data = await file.download_as_bytearray()
+            f.write(file_data)
+            downloaded = len(file_data)
+        
+        await processing_msg.edit_text(
+            f"✅ **ꜰɪʟᴇ ᴅᴏᴡɴʟᴏᴀᴅᴇᴅ!**\n"
+            f"📊 {downloaded / (1024 * 1024):.2f} MB\n"
+            f"🔄 ᴘʀᴏᴄᴇꜱꜱɪɴɢ...",
+            parse_mode="Markdown"
+        )
+        
+        # Process file line by line (streaming read)
         remover = URLDuplicateRemover()
         option = context.user_data.get('remover_option')
         
@@ -3931,19 +4362,19 @@ async def handle_file_processing(update: Update, context: CallbackContext):
         
         # Set mode based on option
         if option == 'remove_url':
-            await processing_msg.edit_text("🌐 **ʀᴇᴍᴏᴠɪɴɢ ᴜʀʟꜱ ɪɴ ᴄʜᴜɴᴋꜱ...**")
+            await processing_msg.edit_text("🌐 **ʀᴇᴍᴏᴠɪɴɢ ᴜʀʟꜱ...**\nᴘʀᴏᴄᴇꜱꜱɪɴɢ ʟɪɴᴇ ʙʏ ʟɪɴᴇ...")
             mode = "remove_url"
             remove_duplicates = False
         elif option == 'remove_tg':
-            await processing_msg.edit_text("🔗 **ʀᴇᴍᴏᴠɪɴɢ ᴛᴇʟᴇɢʀᴀᴍ ʟɪɴᴋꜱ ɪɴ ᴄʜᴜɴᴋꜱ...**")
+            await processing_msg.edit_text("🔗 **ʀᴇᴍᴏᴠɪɴɢ ᴛᴇʟᴇɢʀᴀᴍ ʟɪɴᴋꜱ...**")
             mode = "remove_tg"
             remove_duplicates = False
         elif option == 'full_processing':
-            await processing_msg.edit_text("🔄 **ꜰᴜʟʟ ᴘʀᴏᴄᴇꜱꜱɪɴɢ ɪɴ ᴄʜᴜɴᴋꜱ...**")
+            await processing_msg.edit_text("🔄 **ꜰᴜʟʟ ᴘʀᴏᴄᴇꜱꜱɪɴɢ...**\n• ʀᴇᴍᴏᴠɪɴɢ ᴛɢ ʟɪɴᴋꜱ\n• ꜰɪxɪɴɢ ᴘɪᴘᴇꜱ\n• ʀᴇᴍᴏᴠɪɴɢ ᴜʀʟꜱ")
             mode = "full"
             remove_duplicates = False
         elif option == 'duplicate_removal':
-            await processing_msg.edit_text("🧹 **ʀᴇᴍᴏᴠɪɴɢ ᴅᴜᴘʟɪᴄᴀᴛᴇꜱ ɪɴ ᴄʜᴜɴᴋꜱ...**")
+            await processing_msg.edit_text("🧹 **ʀᴇᴍᴏᴠɪɴɢ ᴅᴜᴘʟɪᴄᴀᴛᴇꜱ...**")
             mode = "full"
             remove_duplicates = True
         else:
@@ -3951,11 +4382,10 @@ async def handle_file_processing(update: Update, context: CallbackContext):
             remove_duplicates = False
         
         # Create output filename
-        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_filename = f"cleaned_{timestamp}.txt"
+        output_filename = f"ᴄʟᴇᴀɴ_{timestamp}.txt"
         output_filepath = GENERATED_DIR / output_filename
         
-        # Process the file line by line (optimized for large files)
+        # Process the file line by line (streaming)
         processed = 0
         saved = 0
         tg_removed = 0
@@ -3964,10 +4394,13 @@ async def handle_file_processing(update: Update, context: CallbackContext):
         
         unique_creds = set() if remove_duplicates else None
         
+        # Process in chunks for progress updates
+        chunk_size_lines = 10000
+        last_progress_update = 0
+        
         with open(input_filepath, 'r', encoding='utf-8', errors='ignore') as infile, \
              open(output_filepath, 'w', encoding='utf-8') as outfile:
             
-            # Process line by line
             for line in infile:
                 processed += 1
                 original = line.strip()
@@ -3976,8 +4409,14 @@ async def handle_file_processing(update: Update, context: CallbackContext):
                     continue
                 
                 # Show progress every 10,000 lines
-                if processed % 10000 == 0:
-                    await processing_msg.edit_text(f"🔄 **ᴘʀᴏᴄᴇꜱꜱɪɴɢ...** {processed:,} ʟɪɴᴇꜱ ᴅᴏɴᴇ...")
+                if processed - last_progress_update >= chunk_size_lines:
+                    last_progress_update = processed
+                    await processing_msg.edit_text(
+                        f"🔄 **ᴘʀᴏᴄᴇꜱꜱɪɴɢ...**\n"
+                        f"📊 {processed:,} ʟɪɴᴇꜱ ᴘʀᴏᴄᴇꜱꜱᴇᴅ\n"
+                        f"✅ {saved:,} ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ ꜱᴀᴠᴇᴅ",
+                        parse_mode="Markdown"
+                    )
                 
                 if mode == "remove_tg":
                     result = remover.remove_tg_links(original)
@@ -4007,6 +4446,8 @@ async def handle_file_processing(update: Update, context: CallbackContext):
         
         await processing_msg.edit_text("✅ **ᴘʀᴏᴄᴇꜱꜱɪɴɢ ᴄᴏᴍᴘʟᴇᴛᴇ!**")
         
+        output_size_mb = output_filepath.stat().st_size / (1024 * 1024) if output_filepath.exists() else 0
+        
         if saved > 0:
             # Build caption based on mode
             if option == 'remove_url':
@@ -4016,7 +4457,8 @@ async def handle_file_processing(update: Update, context: CallbackContext):
                     f"• ʟɪɴᴇꜱ ᴘʀᴏᴄᴇꜱꜱᴇᴅ: **{processed:,}**\n"
                     f"• ʟɪɴᴇꜱ ꜱᴀᴠᴇᴅ: **{saved:,}**\n"
                     f"• ᴜʀʟꜱ ʀᴇᴍᴏᴠᴇᴅ: **{url_removed:,}**\n"
-                    f"• ꜰɪʟᴇ ꜱɪᴢᴇ: **{file_size_mb:.2f} MB**"
+                    f"• ɪɴᴘᴜᴛ ꜱɪᴢᴇ: **{file_size_mb:.2f} MB**\n"
+                    f"• ᴏᴜᴛᴘᴜᴛ ꜱɪᴢᴇ: **{output_size_mb:.2f} MB**"
                 )
             elif option == 'remove_tg':
                 caption = (
@@ -4024,7 +4466,9 @@ async def handle_file_processing(update: Update, context: CallbackContext):
                     f"📊 **ꜱᴛᴀᴛɪꜱᴛɪᴄꜱ:**\n"
                     f"• ʟɪɴᴇꜱ ᴘʀᴏᴄᴇꜱꜱᴇᴅ: **{processed:,}**\n"
                     f"• ʟɪɴᴇꜱ ꜱᴀᴠᴇᴅ: **{saved:,}**\n"
-                    f"• ʟɪɴᴋꜱ ʀᴇᴍᴏᴠᴇᴅ: **{tg_removed:,}**"
+                    f"• ʟɪɴᴋꜱ ʀᴇᴍᴏᴠᴇᴅ: **{tg_removed:,}**\n"
+                    f"• ɪɴᴘᴜᴛ ꜱɪᴢᴇ: **{file_size_mb:.2f} MB**\n"
+                    f"• ᴏᴜᴛᴘᴜᴛ ꜱɪᴢᴇ: **{output_size_mb:.2f} MB**"
                 )
             elif option == 'full_processing':
                 caption = (
@@ -4034,14 +4478,18 @@ async def handle_file_processing(update: Update, context: CallbackContext):
                     f"• ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ ꜱᴀᴠᴇᴅ: **{saved:,}**\n"
                     f"• ʟɪɴᴋꜱ ʀᴇᴍᴏᴠᴇᴅ: **{tg_removed:,}**\n"
                     f"• ᴘɪᴘᴇꜱ ꜰɪxᴇᴅ: **{pipe_fixed:,}**\n"
-                    f"• ᴜʀʟꜱ ʀᴇᴍᴏᴠᴇᴅ: **{url_removed:,}**"
+                    f"• ᴜʀʟꜱ ʀᴇᴍᴏᴠᴇᴅ: **{url_removed:,}**\n"
+                    f"• ɪɴᴘᴜᴛ ꜱɪᴢᴇ: **{file_size_mb:.2f} MB**\n"
+                    f"• ᴏᴜᴛᴘᴜᴛ ꜱɪᴢᴇ: **{output_size_mb:.2f} MB**"
                 )
             else:  # duplicate_removal
                 caption = (
                     f"✅ **ᴅᴜᴘʟɪᴄᴀᴛᴇ ʀᴇᴍᴏᴠᴀʟ ᴄᴏᴍᴘʟᴇᴛᴇ!** ✅\n\n"
                     f"📊 **ꜱᴛᴀᴛɪꜱᴛɪᴄꜱ:**\n"
                     f"• ʟɪɴᴇꜱ ᴘʀᴏᴄᴇꜱꜱᴇᴅ: **{processed:,}**\n"
-                    f"• ᴜɴɪǫᴜᴇ ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ ꜱᴀᴠᴇᴅ: **{saved:,}**"
+                    f"• ᴜɴɪǫᴜᴇ ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ ꜱᴀᴠᴇᴅ: **{saved:,}**\n"
+                    f"• ɪɴᴘᴜᴛ ꜱɪᴢᴇ: **{file_size_mb:.2f} MB**\n"
+                    f"• ᴏᴜᴛᴘᴜᴛ ꜱɪᴢᴇ: **{output_size_mb:.2f} MB**"
                 )
             
             # Send the processed file
@@ -4054,7 +4502,7 @@ async def handle_file_processing(update: Update, context: CallbackContext):
                     parse_mode="Markdown"
                 )
             
-            # Schedule file deletion
+            # Schedule file deletion (5 minutes)
             asyncio.create_task(delete_generated_file(str(input_filepath)))
             asyncio.create_task(delete_generated_file(str(output_filepath)))
             
@@ -4062,8 +4510,8 @@ async def handle_file_processing(update: Update, context: CallbackContext):
             await processing_msg.edit_text(
                 f"❌ **ᴘʀᴏᴄᴇꜱꜱɪɴɢ ꜰᴀɪʟᴇᴅ!** ❌\n\n"
                 f"ɴᴏ ᴠᴀʟɪᴅ ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ ꜰᴏᴜɴᴅ.\n"
-                f"ʟɪɴᴇꜱ ᴘʀᴏᴄᴇꜱꜱᴇᴅ: **{processed}**\n"
-                f"ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ ꜱᴀᴠᴇᴅ: **{saved}**",
+                f"ʟɪɴᴇꜱ ᴘʀᴏᴄᴇꜱꜱᴇᴅ: **{processed:,}**\n"
+                f"ᴄʀᴇᴅᴇɴᴛɪᴀʟꜱ ꜱᴀᴠᴇᴅ: **{saved:,}**",
                 parse_mode="Markdown"
             )
             
@@ -4075,23 +4523,44 @@ async def handle_file_processing(update: Update, context: CallbackContext):
 
     except Exception as e:
         error_msg = str(e)
+        logging.error(f"Error in file processing: {e}")
+        
         if "timed out" in error_msg.lower():
             await processing_msg.edit_text(
                 "❌ **ᴛɪᴍᴇᴏᴜᴛ ᴇʀʀᴏʀ!** ❌\n\n"
-                "ᴛʜᴇ ꜰɪʟᴇ ɪs ᴛᴏᴏ ʟᴀʀɢᴇ ᴛᴏ ᴘʀᴏᴄᴇꜱꜱ.\n\n"
+                "ᴛʜᴇ ꜰɪʟᴇ ᴘʀᴏᴄᴇꜱꜱɪɴɢ ᴛᴏᴏᴋ ᴛᴏᴏ ʟᴏɴɢ.\n\n"
                 "**ꜱᴜɢɢᴇꜱᴛɪᴏɴꜱ:**\n"
-                "• ᴜꜱᴇ ᴀ ꜱᴍᴀʟʟᴇʀ ꜰɪʟᴇ (ᴜɴᴅᴇʀ 1 MB)\n"
-                "• ꜱᴘʟɪᴛ ʏᴏᴜʀ ꜰɪʟᴇ ɪɴᴛᴏ ꜱᴍᴀʟʟᴇʀ ᴄʜᴜɴᴋꜱ\n"
-                "• ᴛʀʏ ᴀɢᴀɪɴ ᴡɪᴛʜ ᴀ ꜱᴍᴀʟʟᴇʀ ꜰɪʟᴇ",
+                "• ᴜꜱᴇ ᴀ ꜱᴍᴀʟʟᴇʀ ꜰɪʟᴇ (ᴜɴᴅᴇʀ 20 MB)\n"
+                "• ꜱᴘʟɪᴛ ʏᴏᴜʀ ꜰɪʟᴇ ɪɴᴛᴏ ꜱᴍᴀʟʟᴇʀ ᴄʜᴜɴᴋꜱ\n",
+                parse_mode="Markdown"
+            )
+        elif "MemoryError" in error_msg or "memory" in error_msg.lower():
+            await processing_msg.edit_text(
+                "❌ **ᴍᴇᴍᴏʀʏ ᴇʀʀᴏʀ!** ❌\n\n"
+                "ᴛʜᴇ ꜰɪʟᴇ ɪꜱ ᴛᴏᴏ ʟᴀʀɢᴇ ᴛᴏ ᴘʀᴏᴄᴇꜱꜱ ɪɴ ᴍᴇᴍᴏʀʏ.\n\n"
+                "**ꜱᴜɢɢᴇꜱᴛɪᴏɴꜱ:**\n"
+                "• ᴜꜱᴇ ᴀ ꜰɪʟᴇ ꜱᴍᴀʟʟᴇʀ ᴛʜᴀɴ 20 MB\n"
+                "• ꜱᴘʟɪᴛ ʏᴏᴜʀ ꜰɪʟᴇ ɪɴᴛᴏ ꜱᴍᴀʟʟᴇʀ ᴄʜᴜɴᴋꜱ",
                 parse_mode="Markdown"
             )
         else:
-            await processing_msg.edit_text(f"❌ **ᴇʀʀᴏʀ:** `{error_msg}`", parse_mode="Markdown")
-        logging.error(f"Error in file processing: {e}")
+            await processing_msg.edit_text(
+                f"❌ **ᴇʀʀᴏʀ:**\n\n"
+                f"```\n{error_msg[:300]}\n```\n\n"
+                f"ᴘʟᴇᴀꜱᴇ ᴛʀʏ ᴀɢᴀɪɴ ᴡɪᴛʜ ᴀ ꜱᴍᴀʟʟᴇʀ ꜰɪʟᴇ.",
+                parse_mode="Markdown"
+            )
     
-    AWAITING_FILE_UPLOAD.discard(user_id)
-    context.user_data.pop('remover_option', None)
-    await start(update, context)
+    finally:
+        AWAITING_FILE_UPLOAD.discard(user_id)
+        context.user_data.pop('remover_option', None)
+        # Clean up temp file if it exists
+        if 'input_filepath' in locals() and os.path.exists(input_filepath):
+            try:
+                os.remove(input_filepath)
+            except:
+                pass
+        await start(update, context)
 
 # ========== DATADOME GENERATOR FUNCTIONS ==========
 async def datadome_menu(update: Update, context: CallbackContext):
@@ -5020,6 +5489,25 @@ async def handle_callback_query(update: Update, context: CallbackContext):
             await back_to_main_menu(update, context)
         elif data == "reseller_stats":
             await reseller_stats(update, context)
+        
+        # ========== NEW GENERATED FOLDER MANAGEMENT (ADMIN ONLY) ==========
+        elif data == "list_generated":
+            await list_generated_files(update, context)
+        elif data == "download_file_prompt":
+            await download_file_prompt(update, context)
+        elif data.startswith("download_this_file:"):
+            await download_specific_file(update, context)
+        elif data == "download_all_files_zip":
+            await download_all_files_zip(update, context)
+        elif data == "delete_all_files":
+            await delete_all_files(update, context)
+        elif data == "confirm_delete_all":
+            await confirm_delete_all(update, context)
+        elif data == "clean_old_files":
+            await clean_old_files(update, context)
+        elif data.startswith("clean_days:"):
+            await handle_clean_days(update, context)
+        
         else:
             await query.message.edit_text(
                 "⚠️ **ᴜɴᴋɴᴏᴡɴ ʙᴜᴛᴛᴏɴ ᴀᴄᴛɪᴏɴ!**\n\nᴘʟᴇᴀꜱᴇ ᴛʀʏ ᴀɢᴀɪɴ ᴏʀ ᴜꜱᴇ /start.",
