@@ -5355,6 +5355,10 @@ async def reseller_stats(update: Update, context: CallbackContext):
 
 # ========== HANDLE UNKNOWN MESSAGES ==========
 async def handle_unknown_message(update: Update, context: CallbackContext):
+    # Check if we have an effective user
+    if not update.effective_user:
+        return
+    
     user_id = update.effective_user.id
     
     if user_id in AWAITING_KEY_INPUT:
@@ -5372,26 +5376,35 @@ async def handle_unknown_message(update: Update, context: CallbackContext):
     elif user_id in AWAITING_ROLE_USER_ID:
         await handle_role_user_id_input(update, context)
     elif user_id in AWAITING_FEEDBACK:
-        await handle_feedback(update, context)
+        # Only handle if it's a message (not callback)
+        if update.message:
+            await handle_feedback(update, context)
     elif user_id in AWAITING_FILE_UPLOAD:
-        await handle_file_processing(update, context)
+        if update.message and update.message.document:
+            await handle_file_processing(update, context)
     elif user_id in AWAITING_BOMBER_PHONE:
-        await handle_bomber_phone(update, context)
+        if update.message:
+            await handle_bomber_phone(update, context)
     elif user_id in AWAITING_BOMBER_AMOUNT:
-        await handle_bomber_amount(update, context)
+        if update.message:
+            await handle_bomber_amount(update, context)
     elif user_id in AWAITING_BOMBER_SENDER:
-        await handle_bomber_sender(update, context)
+        if update.message:
+            await handle_bomber_sender(update, context)
     elif user_id in AWAITING_BOMBER_MESSAGE:
-        await handle_bomber_message(update, context)
+        if update.message:
+            await handle_bomber_message(update, context)
     elif user_id in AWAITING_BOOST_URL:
-        await handle_boost_url(update, context)
+        if update.message:
+            await handle_boost_url(update, context)
     else:
-        await update.message.reply_text(
-            "⚠️ **𝙸 𝚍𝚘𝚗'𝚝 𝚞𝚗𝚍𝚎𝚛𝚜𝚝𝚊𝚗𝚍 𝚝𝚑𝚊𝚝 𝚌𝚘𝚖𝚖𝚊𝚗𝚍!**\n\n"
-            "𝙿𝚕𝚎𝚊𝚜𝚎 𝚞𝚜𝚎 𝚝𝚑𝚎 𝚖𝚎𝚗𝚞 𝚋𝚞𝚝𝚝𝚘𝚗𝚜 𝚘𝚛 𝚝𝚢𝚙𝚎 /start 𝚝𝚘 𝚜𝚎𝚎 𝚊𝚟𝚊𝚒𝚕𝚊𝚋𝚕𝚎 𝚘𝚙𝚝𝚒𝚘𝚗𝚜.",
-            parse_mode="Markdown"
-        )
-
+        # Only reply to actual messages, not callback queries
+        if update.message:
+            await update.message.reply_text(
+                "⚠️ **𝙸 𝚍𝚘𝚗'𝚝 𝚞𝚗𝚍𝚎𝚛𝚜𝚝𝚊𝚗𝚍 𝚝𝚑𝚊𝚝 𝚌𝚘𝚖𝚖𝚊𝚗𝚍!**\n\n"
+                "𝙿𝚕𝚎𝚊𝚜𝚎 𝚞𝚜𝚎 𝚝𝚑𝚎 𝚖𝚎𝚗𝚞 𝚋𝚞𝚝𝚝𝚘𝚗𝚜 𝚘𝚛 𝚝𝚢𝚙𝚎 /start 𝚝𝚘 𝚜𝚎𝚎 𝚊𝚟𝚊𝚒𝚕𝚊𝚋𝚕𝚎 𝚘𝚙𝚝𝚒𝚘𝚗𝚜.",
+                parse_mode="Markdown"
+            )
 # ========== CALLBACK QUERY HANDLER ==========
 async def handle_callback_query(update: Update, context: CallbackContext):
     query = update.callback_query
